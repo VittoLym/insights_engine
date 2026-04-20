@@ -1,0 +1,21 @@
+TOPIC: Serie 3: Security Deep-Dives
+SOURCE FILE: README.md
+SIGNALS: ['refresh', 'auth', 'session']
+==============================
+
+🎨 **VISUAL STRATEGY: SERIE 3: SECURITY DEEP-DIVES**
+
+1️⃣ **The Authority Shot (Code)**:
+   - Tool: Ray.so | Theme: Dracula
+   - Snippet: # 🧠 DevsInsights — Scalable E-Commerce Backend
+
+A distributed e-commerce backend designed to explore **real-world scalability challenges**, not just CRUD operations.
+
+This project focuses on building and evolving a **microservices-based system** with practical engineering decisions such as idempoten...
+
+2️⃣ **The Architecture Diagram**:
+   - Concept: a secure token exchange flow between client and server. Minimalist, dark mode, engineering style.
+
+3️⃣ **Alt-Text**:
+   - English: "Technical diagram illustrating Serie 3: Security Deep-Dives. Focused on system reliability and production-grade implementation."
+    

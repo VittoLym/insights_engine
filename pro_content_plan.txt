@@ -1,0 +1,137 @@
+--- POST (Score: 12) ---
+TOPIC: Financial Precision
+BODY:
+In my order-service, I'm using Prisma Decimal for money handling.
+
+Why? Floating point errors aren't just bugs; they are financial leaks.
+In a microservices architecture, consistency starts at the schema level.
+
+SNIPPET:
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Enums para estados, aseguran consistencia y son ideales para valores fijos [citation:3][citation:8].
+enum OrderStatus {
+KEY INSIGHT: Avoid Float for payments to prevent rounding drift.
+==============================
+
+--- POST (Score: 10) ---
+TOPIC: Event-Driven Resilience
+BODY:
+Decoupling the order-service using RabbitMQ.
+
+Instead of tightly coupled HTTP calls, this service reacts to events.
+This pattern allows us to scale consumers independently when the load spikes.
+
+SNIPPET:
+import { NestFactory } from '@nestjs/core';
+import { OrderModule } from './order.module';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { Logger } from '@nestjs/common';
+
+async function bootstrap() {
+  const app = await NestFactory.create(OrderModule);
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.RMQ,
+    options: {
+      urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+      queue: 'order_rpc_queue', // Cola para eventos
+KEY INSIGHT: Reactive microservices improve system availability during high traffic.
+==============================
+
+--- POST (Score: 10) ---
+TOPIC: Event-Driven Resilience
+BODY:
+Decoupling the payment-service using RabbitMQ.
+
+Instead of tightly coupled HTTP calls, this service reacts to events.
+This pattern allows us to scale consumers independently when the load spikes.
+
+SNIPPET:
+import { NestFactory } from '@nestjs/core';
+import { Logger } from '@nestjs/common';
+import { PaymentModule } from './payment.module';
+import { config } from 'dotenv';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+
+async function bootstrap() {
+  config();
+  const app = await NestFactory.create(PaymentModule);
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.RMQ,
+    options: {
+KEY INSIGHT: Reactive microservices improve system availability during high traffic.
+==============================
+
+--- POST (Score: 10) ---
+TOPIC: Distributed Systems Patterns
+BODY:
+Strategy found in order-service\prisma\schema.prisma: Idempotency Keys.
+
+Crucial for payment and order flows. If a network retry happens, the system won't create a duplicate entry. Safety first.
+
+SNIPPET:
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+KEY INSIGHT: Idempotency keys prevent side-effect duplication in retried requests.
+==============================
+
+--- POST (Score: 7) ---
+TOPIC: Event-Driven Resilience
+BODY:
+Decoupling the product-service using RabbitMQ.
+
+Instead of tightly coupled HTTP calls, this service reacts to events.
+This pattern allows us to scale consumers independently when the load spikes.
+
+SNIPPET:
+import { NestFactory } from '@nestjs/core';
+import { Logger } from '@nestjs/common';
+import { ProductModule } from './product/product.module';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { ValidationPipe } from '@nestjs/common';
+
+async function bootstrap() {
+  const app = await NestFactory.create(ProductModule);
+  app.connectMicroservice<MicroserviceOptions>({
+    transport: Transport.RMQ,
+    options: {
+      urls: [process.env.RABBITMQ_URL || 'amqp://localhost:5672'],
+KEY INSIGHT: Reactive microservices improve system availability during high traffic.
+==============================
+
+--- POST (Score: 7) ---
+TOPIC: Event-Driven Resilience
+BODY:
+Decoupling the user-service using RabbitMQ.
+
+Instead of tightly coupled HTTP calls, this service reacts to events.
+This pattern allows us to scale consumers independently when the load spikes.
+
+SNIPPET:
+import { NestFactory } from '@nestjs/core';
+import { UserModule } from './modules/user/user.module';
+import { MicroserviceOptions, Transport } from '@nestjs/microservices';
+import { AllExceptionsFilter } from '../src/common/filters/http-expetions.filter';
+import { ResponseInterceptor } from '../src/common/interceptors/response-interceptos';
+import cookieParser from 'cookie-parser';
+import { Logger } from '@nestjs/common';
+
+async function bootstrap() {
+  const app = await NestFactory.create(UserModule);
+  app.use(cookieParser());
+  app.connectMicroservice<MicroserviceOptions>({
+KEY INSIGHT: Reactive microservices improve system availability during high traffic.
+==============================
+

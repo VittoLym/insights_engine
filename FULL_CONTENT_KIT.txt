@@ -1,0 +1,134 @@
+
+============================================================
+📦 MEDIA KIT #1 | Serie 3: Security Deep-Dives
+FILE: user-service\src\modules\auth\auth.service.ts | SIGNALS: ['jwt', 'refresh', 'auth', 'session']
+============================================================
+
+--- 🟦 LINKEDIN (Architect Perspective) ---
+Stop pretending stateless JWTs are a silver bullet for auth. In a real-world e-commerce API, "pure" statelessness is just a security vulnerability waiting to happen.
+
+**The Problem: The Illusion of Control**
+If you issue a 1-hour access token and a user’s laptop is stolen, you’re toast. Without a server-side session check or a revocation list, that thief has a 60-minute all-access pass to your checkout flow. You can't "log out" a stateless token.
+
+**The Solution: Hybrid Session Management**
+In `auth.service.ts`, we’re moving away from "simple" auth toward a stateful refresh/stateless access pattern.
+
+*   **Refresh Token Rotation:** Every time a new access token is requested, the old refresh token is invalidated. This detects replay attacks immediately.
+*   **Custom Exception Hierarchy:** We use `TokenBlacklistedException` and `InvalidTokenException` instead of generic 401s. This isn't for UX; it’s for observability and preventing side-channel leaks.
+*   **Database-Backed Sessions:** We use Prisma to track `randomUUID` session IDs. This allows us to kill a user's entire session fleet if we detect suspicious activity.
+*   **Bcrypt & Class-Transformer:** Hashing is non-negotiable, and we use `plainToInstance` to ensure we don't accidentally leak password hashes in the JSON response—a classic junior mistake.
+
+**Trade-offs & Reality Check**
+*   **Latency:** Every token refresh now requires a DB hit. You’re trading a few milliseconds of performance for the ability to actually secure your data.
+*   **Storage Bloat:** You’re now storing session metadata. If you don't implement a TTL cleanup job, your Prisma-managed DB will eventually crawl under the weight of expired UUIDs.
+*   **Complexity:** This is significantly harder to debug than a simple `jwt.sign()` call.
+
+**What happens if you skip this?**
+If you go the "easy" route, you lose the ability to force-logout users after a password reset. You’ll have orphaned sessions with high-privilege access roaming your system. In a production environment, that's not a bug; it's negligence.
+
+**The Question:**
+If your "stateless" JWT implementation doesn't have a mechanism to invalidate a specific token before it expires, are you actually managing security, or just hoping for the best?
+
+--- ⬛ X THREAD ---
+1/ Stateless JWTs are a security liability disguised as a performance win. If you issue a 1-hour token and can’t revoke it, you’ve handed a thief a 60-minute all-access pass to your API. In production, "pure" statelessness is negligence, not an architecture.
+
+2/ The solution is a hybrid stateful refresh/stateless access pattern. Implement Refresh Token Rotation: every time a new access token is requested, the old refresh token is invalidated. This turns a leaked token from a persistent threat into a detectable replay attack.
+
+3/ Use database-backed sessions via Prisma or Redis to track `randomUUID` session IDs. This provides a global "kill switch" to wipe a user’s entire session fleet during a breach. If you can’t force-logout a user after a password reset, your auth system is broken.
+
+4/ Technical rigor matters: use `class-transformer` to prevent password hash leaks and replace generic 401s with specific exceptions like `TokenBlacklistedException`. You trade a few milliseconds of DB latency for the ability to actually secure your data.
+
+5/ Stop optimizing for the "stateless" buzzword and start optimizing for revocation and observability. If your JWT implementation doesn't allow for immediate invalidation, you aren't managing security—you're just hoping for the best. How are you handling orphaned sessions?
+
+--- 🎨 VISUAL STRATEGY ---
+
+🎨 **VISUAL STRATEGY: SERIE 3: SECURITY DEEP-DIVES**
+
+1️⃣ **The Authority Shot (Code)**:
+   - Tool: Ray.so / Carbon.now.sh
+   - Theme: Dracula / Night Owl
+   - Content: import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+  Logger,
+  HttpException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { PrismaService } from '../../prisma/prisma.service';
+import { LoginUserDto } from '../auth/dto/...
+   - Tip: Highlight the specific lines where the logic (e.g., @unique or transaction) happens.
+
+2️⃣ **The Architecture Diagram (Concept)**:
+   - Prompt for AI/Designer: "A minimalist sequence diagram showing two concurrent requests hitting a database. The first one commits, the second one fails with a 'Unique Constraint' error. Clean, professional, dark mode aesthetic."
+
+3️⃣ **Accessibility (Alt-Text)**:
+   - English: "Technical diagram illustrating the Serie 3: Security Deep-Dives pattern. It shows how the system handles high-concurrency without data corruption by using database-level constraints."
+    
+
+============================================================
+📦 MEDIA KIT #3 | Serie 2: Resilient Architecture
+FILE: user-service\src\modules\redis\redis.service.ts | SIGNALS: ['retry', 'timeout']
+============================================================
+
+--- 🟦 LINKEDIN (Architect Perspective) ---
+Most developers treat Redis as an "always-on" utility like electricity. It’s not. If your application logic assumes a 100% uptime for your cache, your "scalable" E-commerce API is just a house of cards waiting for a network blip to collapse.
+
+### The Problem: Cascading Failures
+When Redis hangs or restarts, a naive client implementation will either block the event loop, throw unhandled exceptions, or—worst of all—retry infinitely with no delay. This creates a "retry storm" that ensures your cache stays dead even after the service recovers.
+
+### The Solution: Linear Backoff with a Ceiling
+In `user-service\src\modules\redis\redis.service.ts`, we use `ioredis` with a custom `retryStrategy`. We don’t just "try again."
+
+```typescript
+retryStrategy: (times) => {
+  // Linear backoff: 50ms, 100ms, 150ms... 
+  // Capped at 2 seconds to avoid permanent latency.
+  const delay = Math.min(times * 50, 2000);
+  return delay;
+}
+```
+
+By capping the delay, we ensure the service remains responsive. We’re prioritizing a fast failure over a slow, agonizing hang that consumes all available connections in your pool.
+
+### Trade-offs & Reality Check
+*   **Memory Pressure:** While retrying, the client buffers commands in memory. If your Redis is down for 10 minutes and you have high traffic, you’ll hit an OOM (Out of Memory) error on your Node.js process before Redis ever comes back.
+*   **Stale Data:** A retry strategy keeps the app alive, but it doesn't solve the "cache miss" problem. Your database is about to get hammered by every request that used to be cached.
+*   **Complexity:** Managing `isConnected` state manually is prone to race conditions if not handled within the `onModuleInit` lifecycle correctly.
+
+If you don't implement a sane retry and timeout policy, a 30-second network hiccup in your VPC will trigger a total system outage. You’ll be debugging "Socket Hang Up" errors while your database CPU hits 100%.
+
+**For the Seniors:** At what point do you stop retrying and flip a circuit breaker to bypass the cache entirely, and how do you prevent the "thundering herd" when that breaker finally resets?
+
+--- ⬛ X THREAD ---
+Error generating thread.
+
+--- 🎨 VISUAL STRATEGY ---
+
+🎨 **VISUAL STRATEGY: SERIE 2: RESILIENT ARCHITECTURE**
+
+1️⃣ **The Authority Shot (Code)**:
+   - Tool: Ray.so / Carbon.now.sh
+   - Theme: Dracula / Night Owl
+   - Content: import Redis from 'ioredis';
+import {
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
+
+@Injectable()
+export class RedisService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(RedisService.name);
+  private redis: Redis;
+  private i...
+   - Tip: Highlight the specific lines where the logic (e.g., @unique or transaction) happens.
+
+2️⃣ **The Architecture Diagram (Concept)**:
+   - Prompt for AI/Designer: "A minimalist sequence diagram showing two concurrent requests hitting a database. The first one commits, the second one fails with a 'Unique Constraint' error. Clean, professional, dark mode aesthetic."
+
+3️⃣ **Accessibility (Alt-Text)**:
+   - English: "Technical diagram illustrating the Serie 2: Resilient Architecture pattern. It shows how the system handles high-concurrency without data corruption by using database-level constraints."
+    
