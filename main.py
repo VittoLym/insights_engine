@@ -15,7 +15,7 @@ CONCEPT_MAP = {
         "description": "Handling race conditions and data integrity in high-traffic systems."
     },
     "RESILIENCE": {
-        "signals": ["retry", "circuitbreaker", "timeout", "idempotency"],
+        "signals": ["retry", "circuitbreaker", "timeout", "idempotency", "const"],
         "extract_keywords": ["idempotency", "IdempotencyKey", "catch", "throw new", "RetryStrategy"],
         "series": "Serie 2: Resilient Architecture",
         "seniority_weight": 10,
@@ -96,48 +96,51 @@ def extract_snippet(file_path):
 
 def extract_best_snippet(content, specific_keywords):
     lines = content.split("\n")
-    best_start = -1
     candidates = []
 
+    # Iteramos por todo el archivo buscando puntos de inicio
     for i, line in enumerate(lines):
-        if any(kw.lower() in line.lower() for kw in specific_keywords):
-            if 'import' not in line:
-                best_start = i
-                break
-        if best_start  == -1 and i >= 40:
-            return None # Si no hay nada interesante, no generamos kit basura
+        # Si la línea tiene una keyword y no es un import...
+        if any(kw.lower() in line.lower() for kw in specific_keywords) and 'import' not in line:
+            
+            # Intentamos capturar el bloque lógico desde este punto
+            snippet_lines = []
+            brace_count = 0
+            found_first_brace = False
+            
+            # Buscamos el final del bloque (máximo 30 líneas para no exceder Ray.so)
+            for j in range(i, min(i + 30, len(lines))):
+                curr = lines[j]
+                clean = curr.strip()
+                
+                # Ignorar llaves en decoradores o líneas de metadatos
+                if not clean.startswith(("@", "import")):
+                    brace_count += curr.count("{")
+                    brace_count -= curr.count("}")
+                    if "{" in curr: found_first_brace = True
+                
+                snippet_lines.append(curr)
+                
+                # Si el bloque se cierra correctamente
+                if found_first_brace and brace_count <= 0:
+                    if clean in ["}", "};", "])", "});"]:
+                        break
+            
+            # Si logramos capturar algo coherente, lo puntuamos
+            if snippet_lines:
+                full_snippet = "\n".join(snippet_lines)
+                score = calculate_score(full_snippet, specific_keywords)
+                candidates.append({"score": score, "code": full_snippet})
 
-        snippet_lines = []
-        brace_count = 0
-        found_first_brace = False
-        
-        for j in range(best_start, len(lines)):
-            current_line = lines[j]
-            clean_line = current_line.strip()
-            if clean_line.startswith("import") or " from '" in clean_line:
-                if j == best_start:
-                    snippet_lines.append(current_line)
-                continue
-            snippet_lines.append(current_line)
-            open_braces = current_line.count("{")
-            close_braces = current_line.count("}")
-            brace_count += open_braces
-            brace_count -= close_braces
-            if "{" in current_line:
-                found_first_brace = True
-            if found_first_brace and brace_count <= 0:
-                if clean_line == "}" or clean_line.startswith("}"):
-                    if(snippet_lines is not None and len(snippet_lines) > 0 ):
-                        snippet = "".join(snippet_lines)
-                        print(snippet)
-                        score = calculate_score(snippet,specific_keywords)
-                        candidates.append({"score":score, "code":snippet_lines})
-                    break
-        if not candidates:
-            return None
-        best = max(candidates, key=lambda x: x["score"])
-        print(best)
-        return best['code']
+    # Una vez que revisamos TODO el archivo, elegimos el mejor
+    if not candidates:
+        return None
+
+    # Ordenamos por score de mayor a menor y tomamos el primero
+    best_candidate = max(candidates, key=lambda x: x["score"])
+    
+    print(f"--- Ganador con Score: {best_candidate['score']} ---")
+    return best_candidate['code']
 
 def format_for_ray(snippet):
     snippet = snippet.strip()
@@ -149,18 +152,41 @@ def format_for_ray(snippet):
 
 def calculate_score(snippet, keywords):
     score = 0
-    # Más palabras clave = Más relevancia técnica
+    lines = snippet.split('\n')
+    lower_snippet = snippet.lower()
+
+    # 1. PESO POR KEYWORDS (RELEVANCIA)
     for kw in keywords:
-        score += snippet.lower().count(kw.lower()) * 10
+        # Multiplicamos por la cantidad de veces que aparece la keyword
+        score += lower_snippet.count(kw.lower()) * 15
+
+    # 2. BONUS POR "SENIORITY SIGNALS" (DENSIDAD TÉCNICA)
+    senior_signals = {
+        "$transaction": 50,  # Esto es oro puro para el algoritmo
+        "await promise.all": 40,
+        "try": 20,
+        "catch": 20,
+        "verifyasync": 25,
+        "updateMany": 30,
+        "ReturnType": 35,    # Tipado avanzado
+        "Injectable": -10,   # Bajamos puntos si es solo una definición de clase
+    }
+
+    for signal, bonus in senior_signals.items():
+        if signal.lower() in lower_snippet:
+            score += bonus
+
+    # 3. PENALIZACIÓN POR "CÓDIGO BASURA"
+    if "import {" in lower_snippet and len(lines) < 10:
+        score -= 100  # Matamos los snippets que son solo imports
     
-    # Castigo por ser demasiado corto (menos de 5 líneas no es un post)
-    line_count = len(snippet.split('\n'))
-    if line_count < 5: score -= 50
-    
-    # Bonus por complejidad (si tiene catch o try es un mejor insight)
-    if "catch" in snippet.lower(): score += 20
-    if "await" in snippet.lower(): score += 5
-    
+    # 4. EL "DULCE" DE LA LONGITUD
+    # Un snippet de entre 12 y 22 líneas es el tamaño perfecto para un carrusel
+    if 12 <= len(lines) <= 22:
+        score += 40
+    elif len(lines) > 25:
+        score -= 30 # Muy largo se vuelve aburrido
+
     return score
 
 def generate_hook(snippet, file_path):
@@ -256,50 +282,28 @@ def save_output(data):
 
 def analyze_repo(repo_path):
     repo_data = {"structure": [], "content": {}, "summary": ""}
-    target_extensions = ('.ts', '.py', '.prisma') # Quitamos .md para los snippets, no rinden en Ray.so
-    ignore_folders = {'node_modules', 'dist', '.git', '__pycache__', 'env', '.env','dto'}
-    results = []
-
+    target_extensions = ('.ts', '.py', '.prisma')
+    ignore_folders = {'node_modules', 'dist', '.git', '__pycache__', 'env', '.env', 'dto'}
     for root, dirs, files in os.walk(repo_path):
         dirs[:] = [d for d in dirs if d not in ignore_folders]
         for file in files:
             if file.endswith(target_extensions):
                 full_path = os.path.join(root, file)
                 rel_path = os.path.relpath(full_path, repo_path)
+                repo_data["structure"].append(rel_path)
                 try:
                     with open(full_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                 except Exception:
                     continue
-                # 1. EVALUACIÓN: ¿Este archivo tiene algo interesante según el CONCEPT_MAP?
-                best_category = None
-                best_config = None
-                
+                is_relevant = False
                 for category, config in CONCEPT_MAP.items():
                     if any(signal.lower() in content.lower() for signal in config["signals"]):
-                        best_category = category
-                        best_config = config
+                        is_relevant = True
                         break
-                if best_category:
-                    snippet = extract_best_snippet(content, best_config["extract_keywords"])
-                    if snippet and len(snippet.split('\n')) > 4:
-                        snippet = format_for_ray(snippet)
-                        
-                        # Generamos el contenido del carrusel usando el contexto de la categoría
-                        hook = generate_hook(snippet, best_category) 
-                        carousel = generate_carousel(snippet, hook, best_category)
-
-                        results.append({
-                            "file": rel_path,
-                            "category": best_category,
-                            "carousel": carousel
-                        })
-                        
-                        # Guardamos para el contexto global de la IA
-                        repo_data["content"][rel_path] = content[:2000]
-
-    save_output(results)
-    print(repo_data)
+                
+                if is_relevant:
+                    repo_data["content"][rel_path] = content
     return repo_data
 
 def score_file(path):
@@ -324,7 +328,6 @@ def is_valid_output(text):
     return not any(phrase in text for phrase in banned_phrases)
 
 def generate_pro_drafts(repo_data):
-    print(repo_data)
     """Detección Dinámica basada en CONCEPT_MAP."""
     drafts = []
     
@@ -332,11 +335,8 @@ def generate_pro_drafts(repo_data):
         for category, config in CONCEPT_MAP.items():
             # Buscamos si alguna señal de la categoría está en el archivo
             found_signals = [s for s in config["signals"] if s.lower() in content.lower()]
-            
             if found_signals:
-                # Calculamos score basado en señales y tamaño de archivo
                 relevant_snippet = extract_best_snippet(content, config["extract_keywords"])
-                print(relevant_snippet)
                 if not relevant_snippet: continue
                 base_score = config["seniority_weight"] + (len(found_signals) * 2)
                 if len(content) > 1200: base_score += 5

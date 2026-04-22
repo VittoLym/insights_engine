@@ -98,9 +98,6 @@ def generate_x_thread(topic, final_post):
         return "Error generating thread."
 
 def generate_visual_prompts(topic, snippet):
-    clean_snippet = snippet[:300] if snippet else ""
-    
-    # Lógica simple para variar el diagrama según el tema
     diagram_concept = "a system architecture flow"
     if "Security" in topic:
         diagram_concept = "a secure token exchange flow between client and server"
@@ -114,7 +111,7 @@ def generate_visual_prompts(topic, snippet):
 
 1️⃣ **The Authority Shot (Code)**:
    - Tool: Ray.so | Theme: Dracula
-   - Snippet: {clean_snippet}...
+   - Snippet: {snippet}...
 
 2️⃣ **The Architecture Diagram**:
    - Concept: {diagram_concept}. Minimalist, dark mode, engineering style.
