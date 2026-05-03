@@ -5,6 +5,9 @@ from gemini_adp import refine_post,generate_visual_prompts,generate_x_thread
 import re
 import json
 from textwrap import dedent
+import requests
+import base64
+from urllib.parse import quote
 
 CONCEPT_MAP = {
     "CONCURRENCY": {
@@ -54,6 +57,80 @@ TARGET_KEYWORDS = [
 ]
 
 MAX_SNIPPET_LINES = 15
+
+def generate_code_image(snippet, folder_path):
+    """Genera una imagen profesional del código usando la API de Carbon."""
+    print(f"        [🎨] Renderizando imagen de código...")
+    
+    # Limpiamos el snippet para evitar errores de URL
+    clean_snippet = snippet.strip()
+    encoded_code = quote(clean_snippet)
+    
+    # Configuración: Tema Dracula, lenguaje TypeScript
+    api_url = f"https://carbon-api-us.vercel.app/api/generate?code={encoded_code}&theme=dracula&language=typescript&backgroundColor=rgba(0,0,0,0)"
+    
+    try:
+        response = requests.get(api_url, timeout=30)
+        if response.status_code == 200:
+            with open(f"{folder_path}/1_code_snippet.png", 'wb') as f:
+                f.write(response.content)
+            return True
+    except Exception as e:
+        print(f"        [⚠️] No se pudo generar la imagen del código: {e}")
+    return False
+
+def generate_architecture_diagram(topic, folder_path):
+    """Genera un diagrama Mermaid basado en el tópico del post."""
+    print(f"        [📊] Generando diagrama de arquitectura...")
+    
+    # Definimos plantillas lógicas según el tópico
+    templates = {
+        "CONCURRENCY": "sequenceDiagram\n  Participant C as Client\n  Participant API as NestJS\n  Participant DB as Postgres\n  C->>API: Request\n  Note right of API: Start Transaction\n  API->>DB: Select FOR UPDATE\n  DB-->>API: Locked Row\n  API->>DB: Update State\n  Note right of API: Commit\n  API-->>C: Success",
+        "SECURITY": "graph LR\n  A[Client] -->|JWT| B(AuthGuard)\n  B -->|Validate| C{Redis Blacklist}\n  C -->|Valid| D[Controller]\n  C -->|Invalid| E[401 Unauthorized]",
+        "RESILIENCE": "graph TD\n  A[Request] --> B{Circuit Breaker}\n  B -->|Open| C[Fallback Response]\n  B -->|Closed| D[External Service]\n  D -->|Timeout| B"
+    }
+    
+    # Seleccionamos la plantilla o una genérica
+    key = next((k for k in templates if k in topic.upper()), None)
+    mermaid_code = templates.get(key, "graph LR\n  A[Client] --> B[Service]\n  B --> C[Database]")
+    
+    # Codificamos para Mermaid.ink
+    mermaid_bytes = mermaid_code.encode('utf-8')
+    base64_mermaid = base64.b64encode(mermaid_bytes).decode('utf-8')
+    img_url = f"https://mermaid.ink/img/{base64_mermaid}?type=png&bgColor=1a1b26"
+    
+    try:
+        res = requests.get(img_url, timeout=20)
+        if res.status_code == 200:
+            with open(f"{folder_path}/2_architecture.png", 'wb') as f:
+                f.write(res.content)
+            return True
+    except:
+        pass
+    return False
+
+def save_media_kit(index, post_data, linked_post, x_thread, visuals):
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    topic_slug = post_data['topic'].replace(" ", "_").replace(":", "").lower()
+    folder_name = f"content_factory/Kit_{index+1}_{topic_slug}_{date_str}"
+    
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+
+    # 1. Guardar archivos de texto
+    with open(f"{folder_name}/linkedin.md", 'w', encoding='utf-8') as f:
+        f.write(linked_post)
+    with open(f"{folder_name}/x_thread.md", 'w', encoding='utf-8') as f:
+        f.write(x_thread)
+
+    # 2. GENERACIÓN AUTOMÁTICA DE IMÁGENES
+    # Generamos la imagen del código (Authority Shot)
+    generate_code_image(post_data['snippet'], folder_name)
+    
+    # Generamos el diagrama (System Design Insight)
+    generate_architecture_diagram(post_data['topic'], folder_name)
+        
+    return folder_name
 
 def extract_snippet(file_path):
     try:
@@ -244,35 +321,6 @@ def generate_carousel(snippet, hook, file_path):
         },
         "caption": f"{hook}\n\nBreak your system before production does.\n\n#backend #microservices #softwarearchitecture"
     }
-
-def save_media_kit(index, post_data, linked_post, x_thread, visuals):
-    """Crea una carpeta única para el kit y guarda los archivos individuales."""
-    # Nombre de carpeta limpio: Kit_1_Resilient_Architecture_2026-04-19
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    topic_slug = post_data['topic'].replace(" ", "_").replace(":", "").lower()
-    folder_name = f"content_factory/Kit_{index+1}_{topic_slug}_{date_str}"
-    
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
-
-    # 1. Guardar Post de LinkedIn
-    with open(f"{folder_name}/linkedin.md", 'w', encoding='utf-8') as f:
-        f.write(linked_post)
-    
-    # 2. Guardar Hilo de X
-    with open(f"{folder_name}/x_thread.md", 'w', encoding='utf-8') as f:
-        f.write(x_thread)
-        
-    # 3. Guardar Estrategia Visual y Contexto
-    with open(f"{folder_name}/visual_strategy.txt", 'w', encoding='utf-8') as f:
-        content = f"TOPIC: {post_data['topic']}\n"
-        content += f"SOURCE FILE: {post_data['file']}\n"
-        content += f"SIGNALS: {post_data['signals']}\n"
-        content += "="*30 + "\n"
-        content += visuals
-        f.write(content)
-        
-    return folder_name
 
 def save_output(data):
     with open("carousels.json", "w", encoding="utf-8") as f:
