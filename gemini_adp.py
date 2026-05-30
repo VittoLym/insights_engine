@@ -160,9 +160,28 @@ def generate_x_thread(topic, final_post):
             contents=prompt,
             config={"system_instruction": system_instruction}
         )
-        return response.text
-    except: 
-        return "Error generating thread."
+        text = response.text.strip()
+        if is_valid_output(text):
+            print(f"    [✓] Gemini OK ")
+            return text
+    except Exception as e:
+        print(f"    [❌] Gemini error: {e}")
+    try:
+            response = client_groq.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.7,
+                max_tokens=600
+            )
+            text = response.choices[0].message.content.strip()
+            if is_valid_output(text):
+                print(f"    [✓] Groq fallback OK")
+                return text
+    except Exception as e:
+        print(f"    [❌] Groq error (attempt: {e}")
 
 def generate_visual_prompts(topic, snippet):
     diagram_concept = "a system architecture flow"
