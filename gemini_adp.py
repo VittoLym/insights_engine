@@ -3,10 +3,12 @@ import os
 from google import genai
 from dotenv import load_dotenv
 import time
+from groq import Groq
 
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=API_KEY)
+client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 def parse_pro_content(filename):
     """Extrae el insight de mayor score del plan de contenido."""
@@ -25,51 +27,116 @@ def parse_pro_content(filename):
     except (AttributeError, IndexError):
         return None, None, None
 
+def is_valid_output(text: str) -> bool:
+    if not text:
+        return False
+
+    text = text.strip()
+
+    banned_patterns = [
+        "503",
+        "UNAVAILABLE",
+        "API Error",
+        "limit reached",
+        "quota exceeded",
+        "internal server error",
+        "model is currently experiencing high demand",
+        "try again later",
+        "rate limit",
+        "service unavailable",
+        "error occurred",
+    ]
+
+    lower_text = text.lower()
+
+    for pattern in banned_patterns:
+        if pattern.lower() in lower_text:
+            return False
+
+    # Muy corto = probablemente roto
+    if len(text) < 80:
+        return False
+
+    return True
+
 def refine_post(topic, body, snippet):
-    """Refina el contenido con personalidad de Lead Engineer en INGLÉS."""
-    
-    # Inyectamos la instrucción del idioma y el tono pragmático
-    system_persona = (
-        "You are a pragmatic Lead Software Engineer. "
-        "Your tone is direct, technical, and cynical toward marketing hype. "
-        "Language: English (US). " # <--- Obligatorio
-        "\n\nWRITING RULES:"
-        "\n1. NO corporate fluff or buzzwords (e.g., 'revolutionary', 'game-changer')."
-        "\n2. Structure: Technical Problem -> Code Solution -> Trade-offs & Reality Check."
-        "\n3. Focus on failure: What happens if this is NOT implemented? (e.g., data corruption, outages)."
-        "\n4. Use professional but conversational English (Senior Dev style)."
-        "\n5. Format: Short paragraphs and technical bullet points."
-    )
+    max_retries = 3
 
-    config = {
-        "system_instruction": system_persona
-    }
-    
-    prompt = f"""
-    TECHNICAL CONTEXT:
-    Project: Scalable E-commerce API
-    Topic: {topic}
-    File Analysis: {body}
-    
-    REFERENCE CODE:
-    {snippet}
+    system_persona = """You are a senior backend engineer. 10+ years in production systems.
+You write LinkedIn posts for other senior engineers.
 
-    TASK:
-    Write a LinkedIn post (max 400 words) dissecting this implementation.
-    Explain why we chose this pattern over a simpler one.
-    Include a 'Trade-offs' section.
-    End with a question that challenges senior engineers' perspective.
-    """
-    
-    try:
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=prompt,
-            config=config
-        )
-        return response.text
-    except Exception as e:
-        return f"API Error: {e}"
+RULES (non-negotiable):
+- Max 220 words
+- No markdown headers, no emojis, no hashtags in the body
+- No bullets unless absolutely necessary (max 3)
+- No corporate words: robust, scalable, leverage, innovative, game-changer
+- No preachy openings: "Stop doing X", "Most devs...", "You're doing X wrong"
+- No explaining what JWT or bcrypt IS — assume they know
+- Never sound like an AI summary
+
+STRUCTURE:
+1. One-line hook — a real engineering pain or consequence (not clickbait)
+2. What this code does and WHY it exists (2-3 sentences max)
+3. What silently breaks if this is missing (concrete: outage, data corruption, duplicate charge, security hole)
+4. One honest trade-off
+5. One genuine question a senior engineer would actually debate
+
+The code snippet is the anchor. Talk about decisions, not syntax."""
+
+    # Body enriquecido con el snippet real
+    enriched_body = f"""
+File: {topic}
+Detected patterns: {body}
+
+The post must be centered around this specific code:
+
+```typescript
+{snippet.strip()}
+```
+
+Do NOT summarize the code line by line.
+Focus on: why this implementation exists, what production problem it solves,
+and what happens in a real system when it's absent or wrong.
+"""
+
+    for attempt in range(max_retries):
+        # Intento 1: Gemini
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=enriched_body,
+                config={"system_instruction": system_persona}
+            )
+            text = response.text.strip()
+            if is_valid_output(text):
+                print(f"    [✓] Gemini OK (attempt {attempt+1})")
+                return text
+        except Exception as e:
+            print(f"    [❌] Gemini error (attempt {attempt+1}): {e}")
+
+        # Intento 2: Groq como fallback real
+        try:
+            response = client_groq.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": system_persona},
+                    {"role": "user", "content": enriched_body}
+                ],
+                temperature=0.7,
+                max_tokens=600
+            )
+            text = response.choices[0].message.content.strip()
+            if is_valid_output(text):
+                print(f"    [✓] Groq fallback OK (attempt {attempt+1})")
+                return text
+        except Exception as e:
+            print(f"    [❌] Groq error (attempt {attempt+1}): {e}")
+
+        wait_time = 2 ** attempt
+        print(f"    [⏳] Retrying in {wait_time}s...")
+        time.sleep(wait_time)
+
+    return None
 
 def generate_x_thread(topic, final_post):
     """Convierte el post en un hilo de X (Twitter) técnico y viral en inglés."""

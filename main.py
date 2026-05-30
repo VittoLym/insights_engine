@@ -8,6 +8,10 @@ from textwrap import dedent
 import requests
 import base64
 from urllib.parse import quote
+from playwright.sync_api import sync_playwright
+from bluesky_publisher import publish_thread_bluesky
+from x_publisher import publish_thread_x
+from dev_publisher import publish_devto
 
 CONCEPT_MAP = {
     "CONCURRENCY": {
@@ -57,27 +61,8 @@ TARGET_KEYWORDS = [
 ]
 
 MAX_SNIPPET_LINES = 15
-
-def generate_code_image(snippet, folder_path):
-    """Genera una imagen profesional del código usando la API de Carbon."""
-    print(f"        [🎨] Renderizando imagen de código...")
-    
-    # Limpiamos el snippet para evitar errores de URL
-    clean_snippet = snippet.strip()
-    encoded_code = quote(clean_snippet)
-    
-    # Configuración: Tema Dracula, lenguaje TypeScript
-    api_url = f"https://carbon-api-us.vercel.app/api/generate?code={encoded_code}&theme=dracula&language=typescript&backgroundColor=rgba(0,0,0,0)"
-    
-    try:
-        response = requests.get(api_url, timeout=30)
-        if response.status_code == 200:
-            with open(f"{folder_path}/1_code_snippet.png", 'wb') as f:
-                f.write(response.content)
-            return True
-    except Exception as e:
-        print(f"        [⚠️] No se pudo generar la imagen del código: {e}")
-    return False
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
+PERSON_URN   = os.getenv("URN_PERSON")
 
 def generate_architecture_diagram(topic, folder_path):
     """Genera un diagrama Mermaid basado en el tópico del post."""
@@ -105,9 +90,52 @@ def generate_architecture_diagram(topic, folder_path):
             with open(f"{folder_path}/2_architecture.png", 'wb') as f:
                 f.write(res.content)
             return True
-    except:
-        pass
+    except Exception as e:
+        print(e)
+        return False
+    
     return False
+
+def generate_code_image(snippet, folder_path, title="Senior Dev Insight"):
+    """
+    Usa Playwright para entrar a Ray.so, renderizar el código y guardar el PNG.
+    """
+    print(f"        [🎭] Playwright: Iniciando renderizado para {title}...")
+
+    clean_snippet = snippet.encode("utf-8", errors="ignore").decode("utf-8")
+    code_bytes = clean_snippet.encode('utf-8')
+    code_base64 = base64.b64encode(code_bytes).decode('utf-8')
+    code_final = code_base64.replace('+', '-').replace('/', '_').replace('=', '')
+    ray_url = f"https://ray.so/#code={code_final}&theme=dark&background=true&language=typescript&title={title}"
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(device_scale_factor=2)
+            page = context.new_page()
+            page.set_viewport_size({"width": 1600, "height": 1200})
+            page.goto(ray_url, wait_until="networkidle")
+            time.sleep(2)
+            target_id = "#frame"
+            if page.locator(target_id).is_visible():
+                output_path = f"{folder_path}/1_authority_shot.png"
+                page.locator(target_id).screenshot(path=output_path, omit_background=True)
+                print(f"        [✓] Imagen guardada: {output_path}")
+                success = True
+            else:
+                print("        [⚠️] No se encontró el frame, intentando captura de emergencia...")
+                page.screenshot(
+                    path=f"{folder_path}/1_emergency_shot.png", 
+                    clip={"x": 200, "y": 150, "width": 1200, "height": 800},
+                    omit_background=True
+                )
+                success = True
+                
+            browser.close()
+            return success
+    except Exception as e:
+        print(f"        [❌] Error en Playwright: {str(e)}")
+        return False
 
 def save_media_kit(index, post_data, linked_post, x_thread, visuals):
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -393,7 +421,7 @@ def generate_pro_drafts(repo_data):
                     "topic": config["series"],
                     "signals": found_signals,
                     "file": path,
-                    "body": f"Technical analysis of {path}. Found patterns: {', '.join(found_signals)}.",
+                    "body": f"Signals found: {', '.join(found_signals)}. Seniority weight: {config['seniority_weight']}. {config['description']}",
                     "snippet": relevant_snippet, # Snippet más largo para mejor contexto
                     "insight": f"Implementation of {category} patterns in production-ready code."
                 })
@@ -420,8 +448,132 @@ def audit_seniority(repo_data):
     level = "Senior/Architect" if points > 60 else "Mid-Level" if points > 30 else "Junior"
     return points, level, findings
 
+def get_first_png(folder_path):
+    png_files = sorted([
+        f for f in os.listdir(folder_path)
+        if f.lower().endswith(".png")
+    ])
+
+    if not png_files:
+        return None
+
+    return os.path.join(folder_path, png_files[0])
+
+def register_upload():
+    url = "https://api.linkedin.com/v2/assets?action=registerUpload"
+
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+        "X-Restli-Protocol-Version": "2.0.0",
+        "LinkedIn-Version": "202501"
+    }
+
+    body = {
+        "registerUploadRequest": {
+            "recipes": [
+                "urn:li:digitalmediaRecipe:feedshare-image"
+            ],
+            "owner": PERSON_URN,
+            "serviceRelationships": [
+                {
+                    "relationshipType": "OWNER",
+                    "identifier": "urn:li:userGeneratedContent"
+                }
+            ]
+        }
+    }
+
+    r = requests.post(
+        url,
+        headers=headers,
+        json=body
+    )
+
+    return r.json()
+
+def publish_linkedin(text: str, media_paths: str=[]):
+    media_assets = []
+    for path in media_paths:
+        asset = upload_image(path)
+        media_assets.append({
+            "status": "READY",
+            "media": asset
+        })
+    url = "https://api.linkedin.com/v2/ugcPosts"
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+        "X-Restli-Protocol-Version": "2.0.0"
+    }
+    body = {
+        "author": PERSON_URN,
+        "lifecycleState": "PUBLISHED",
+        "specificContent": {
+            "com.linkedin.ugc.ShareContent": {
+                "shareCommentary": {"text": text},
+                "shareMediaCategory": (
+                    "IMAGE"
+                    if media_assets
+                    else "NONE"
+                ),
+                "media": media_assets
+            }
+            
+        },
+        "visibility": {
+            "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+        }
+    }
+    try:
+        r = requests.post(
+            url,
+            headers=headers,
+            json=body
+        )
+
+        print(f"STATUS: {r.status_code}")
+        print("RAW RESPONSE:")
+        print(r.text)
+
+        return r.status_code, r.json()
+
+    except Exception as e:
+        print("❌ Publish error:", e)
+        return None, str(e)
+
+def upload_image(image_path):
+
+    upload_data = register_upload()
+
+    upload_url = (
+        upload_data["value"]
+        ["uploadMechanism"]
+        ["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"]
+        ["uploadUrl"]
+    )
+
+    asset = upload_data["value"]["asset"]
+
+    with open(image_path, "rb") as f:
+        image_binary = f.read()
+
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}"
+    }
+
+    r = requests.put(
+        upload_url,
+        data=image_binary,
+        headers=headers
+    )
+
+    print("UPLOAD:", r.status_code)
+
+    return asset
+
 if __name__ == "__main__":
-    REPO_PATH = 'C:/Users/PC/Documents/Projects/Scalable_ecommerce_api'
+    REPO_PATH = os.getenv("REPO_PATH")
     
     print("[+] Step 1: Analyzing Repository...")
     data = analyze_repo(REPO_PATH)
@@ -453,7 +605,24 @@ if __name__ == "__main__":
             # Guardar en su propia carpeta
             path = save_media_kit(i, post_data, linked_post, x_thread, visuals)
             print(f"    [✓] Kit {i+1} saved to: {path}")
-            
+            pngPath = get_first_png(path)
+            print(x_thread)
+            publish_linkedin(linked_post,[pngPath])
+            publish_thread_bluesky(x_thread)
+            time.sleep(3)
+            publish_thread_x(x_thread)
+            time.sleep(3)
+            publish_devto(
+                topic=post_data['topic'],
+                linkedin_post=linked_post,
+                snippet=post_data['snippet'],
+                series_name=post_data['topic'],  # ya tiene el nombre de la serie
+                signals=post_data['signals'],
+                published=False
+            )
             time.sleep(5) # Cooldown
+            break
 
         print(f"\n[#] PIPELINE COMPLETE. Content factory is ready.")
+        
+    
