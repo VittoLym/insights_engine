@@ -10,6 +10,57 @@ API_KEY = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=API_KEY)
 client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+
+def extract_snippet_with_ai(content: str, category: str, description: str) -> str | None:
+    """
+    Usa IA para extraer el snippet más valioso cuando el regex no alcanza.
+    Solo se llama para archivos de alto score.
+    """
+    prompt = f"""You are a senior engineer reviewing code for a technical blog post.
+
+Category: {category}
+Description: {description}
+
+From the following code, extract the single most interesting and educational snippet (10-20 lines max).
+The snippet must:
+- Show a non-obvious engineering decision
+- Be self-contained enough to understand without full context
+- Relate directly to: {description}
+
+Return ONLY the code snippet, no explanation, no markdown fences.
+
+CODE:
+{content[:3000]}"""  # limitamos para no exceder tokens
+
+    # Intentamos con Gemini primero
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+        )
+        text = response.text.strip()
+        if text and len(text.split('\n')) >= 3:
+            return text
+    except Exception as e:
+        print(f"        [⚠️] Gemini snippet error: {e}")
+
+    # Fallback a Groq
+    try:
+        response = client_groq.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=400,
+            temperature=0.2  # bajo para que no invente código
+        )
+        text = response.choices[0].message.content.strip()
+        if text and len(text.split('\n')) >= 3:
+            return text
+    except Exception as e:
+        print(f"        [⚠️] Groq snippet error: {e}")
+
+    return None
+
+
 def parse_pro_content(filename):
     """Extrae el insight de mayor score del plan de contenido."""
     if not os.path.exists(filename):

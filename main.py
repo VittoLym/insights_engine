@@ -12,7 +12,8 @@ from playwright.sync_api import sync_playwright
 from bluesky_publisher import publish_thread_bluesky
 from x_publisher import publish_thread_x
 from dev_publisher import publish_devto
-
+from repo_scanner import analyze_repo, audit_seniority
+from gemini_adp import extract_snippet_with_ai
 CONCEPT_MAP = {
     "CONCURRENCY": {
         "signals": ["transaction", "lock", "stock", "decrement", "atomic"],
@@ -153,12 +154,31 @@ def save_media_kit(index, post_data, linked_post, x_thread, visuals):
 
     # 2. GENERACIÓN AUTOMÁTICA DE IMÁGENES
     # Generamos la imagen del código (Authority Shot)
-    generate_code_image(post_data['snippet'], folder_name)
+    clean_snippet = trim_snippet_for_rayso(post_data['snippet'], max_lines=35)
+    generate_code_image(clean_snippet, folder_name)
     
     # Generamos el diagrama (System Design Insight)
     generate_architecture_diagram(post_data['topic'], folder_name)
         
     return folder_name
+
+def trim_snippet_for_rayso(snippet: str, max_lines: int = 35) -> str:
+    """
+    Si el snippet es muy largo para Ray.so, corta en un punto limpio
+    (cierre de bloque lógico) en lugar de cortar arbitrariamente.
+    """
+    lines = snippet.split('\n')
+    if len(lines) <= max_lines:
+        return snippet
+
+    # Buscamos el último cierre de bloque antes del límite
+    for i in range(max_lines, max_lines - 10, -1):
+        stripped = lines[i].strip()
+        if stripped in ('}', '};', '});', '})', 'end'):
+            return '\n'.join(lines[:i+1])
+
+    # Si no hay cierre limpio, cortamos con indicador
+    return '\n'.join(lines[:max_lines]) + '\n  // ...'
 
 def extract_snippet(file_path):
     try:
@@ -199,54 +219,176 @@ def extract_snippet(file_path):
     except Exception as e:
         return None
 
-def extract_best_snippet(content, specific_keywords):
-    lines = content.split("\n")
+def extract_best_snippet(content: str, keywords: list) -> str | None:
+    """
+    Extrae el método/función con más señales de seniority del archivo.
+    Agnóstico al lenguaje: detecta funciones por patrones universales.
+    """
+    lines = content.split('\n')
+    
+    # Patrones que indican el INICIO de una función/método en cualquier lenguaje
+    FUNCTION_START_PATTERNS = [
+        r'^\s*(async\s+)?function\s+\w+',          # JS/TS function
+        r'^\s*(public|private|protected|async).*\w+\s*\(',  # TS class method
+        r'^\s*async\s+\w+\s*\(',                    # async method
+        r'^\s*def\s+\w+\s*\(',                      # Python
+        r'^\s*func\s+\w+\s*\(',                     # Go
+        r'^\s*(pub\s+)?fn\s+\w+\s*\(',              # Rust
+    ]
+    
+    # Señales que suben el score del método
+    SENIOR_BONUS = {
+        'transaction':      40,
+        'atomic':           40,
+        'idempoten':        45,
+        'retry':            30,
+        'circuit':          35,
+        'rollback':         35,
+        'promise.all':      30,
+        'gather':           30,
+        'lock':             25,
+        'try':              10,
+        'catch':            10,
+        'throw':            10,
+        'await':            8,
+        'async':            5,
+        'rabbitmq':         20,
+        'publish':          15,
+        'subscribe':        15,
+        'cache':            15,
+        'jwt':              15,
+        'verify':           12,
+        'decrypt':          20,
+        'encrypt':          20,
+        'hash':             15,
+        'timeout':          20,
+        'event':            10,
+    }
+
+    # Señales que BAJAN el score
+    JUNIOR_PENALTY = {
+        'console.log':      -15,
+        'console.error':    -10,
+        'print(':           -15,
+        'TODO':             -10,
+        'FIXME':            -10,
+        'any':              -8,
+        '@ts-ignore':       -20,
+        'except:\n':        -25,
+    }
+
+    def extract_method_block(start_idx: int) -> list[str]:
+        """Extrae el bloque completo desde el inicio del método."""
+        block = []
+        brace_count = 0
+        indent_count = 0
+        found_opening = False
+        is_indent_based = False  # para Python
+
+        for j in range(start_idx, min(start_idx + 80, len(lines))):
+            line = lines[j]
+            block.append(line)
+
+            # Detectar si es indentación (Python) o llaves (JS/TS/Go)
+            if '{' in line:
+                brace_count += line.count('{')
+                brace_count -= line.count('}')
+                found_opening = True
+            
+            # Corte por llaves (JS/TS/Go/Rust)
+            if found_opening and brace_count <= 0 and len(block) > 2:
+                break
+
+            # Corte por longitud máxima
+            if len(block) >= 35:
+                break
+
+        return block
+
+    def score_block(block: list[str]) -> int:
+        """Puntúa un bloque por señales de seniority."""
+        score = 0
+        full_text = '\n'.join(block).lower()
+
+        for signal, bonus in SENIOR_BONUS.items():
+            if signal.lower() in full_text:
+                score += bonus
+
+        for signal, penalty in JUNIOR_PENALTY.items():
+            if signal.lower() in full_text:
+                score += penalty  # ya son negativos
+
+        # Bonus si además tiene keywords del CONCEPT_MAP
+        for kw in keywords:
+            if kw.lower() in full_text:
+                score += 15
+
+        # Longitud ideal
+        if 10 <= len(block) <= 30:
+            score += 20
+        elif len(block) < 5:
+            score -= 30
+
+        return score
+
+    # ── Pipeline principal ──────────────────────────────────────
+
     candidates = []
 
-    # Iteramos por todo el archivo buscando puntos de inicio
     for i, line in enumerate(lines):
-        # Si la línea tiene una keyword y no es un import...
-        if any(kw.lower() in line.lower() for kw in specific_keywords) and 'import' not in line:
-            
-            # Intentamos capturar el bloque lógico desde este punto
-            snippet_lines = []
-            brace_count = 0
-            found_first_brace = False
-            
-            # Buscamos el final del bloque (máximo 30 líneas para no exceder Ray.so)
-            for j in range(i, min(i + 30, len(lines))):
-                curr = lines[j]
-                clean = curr.strip()
-                
-                # Ignorar llaves en decoradores o líneas de metadatos
-                if not clean.startswith(("@", "import")):
-                    brace_count += curr.count("{")
-                    brace_count -= curr.count("}")
-                    if "{" in curr: found_first_brace = True
-                
-                snippet_lines.append(curr)
-                
-                # Si el bloque se cierra correctamente
-                if found_first_brace and brace_count <= 0:
-                    if clean in ["}", "};", "])", "});"]:
-                        break
-            
-            # Si logramos capturar algo coherente, lo puntuamos
-            if snippet_lines:
-                full_snippet = "\n".join(snippet_lines)
-                score = calculate_score(full_snippet, specific_keywords)
-                candidates.append({"score": score, "code": full_snippet})
+        # Ignorar imports, comentarios, decoradores
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(('//', '#', '*', '/*', '@', 'import', 'from', 'export type', 'interface', 'type ')):
+            continue
 
-    # Una vez que revisamos TODO el archivo, elegimos el mejor
+        # Detectar si la línea es inicio de función
+        is_function_start = any(
+            re.match(pattern, line)
+            for pattern in FUNCTION_START_PATTERNS
+        )
+
+        if not is_function_start:
+            continue
+
+        block = extract_method_block(i)
+        if len(block) < 4:
+            continue
+
+        score = score_block(block)
+
+        # Solo consideramos bloques con score positivo
+        if score > 0:
+            candidates.append({
+                "score": score,
+                "start_line": i,
+                "block": block,
+            })
+
     if not candidates:
         return None
 
-    # Ordenamos por score de mayor a menor y tomamos el primero
-    best_candidate = max(candidates, key=lambda x: x["score"])
+    # Tomamos el bloque con mayor score
+    best = max(candidates, key=lambda x: x["score"])
     
-    print(f"--- Ganador con Score: {best_candidate['score']} ---")
-    return best_candidate['code']
-
+    print(f"        [✓] Mejor snippet: línea {best['start_line']+1}, score={best['score']}, {len(best['block'])} líneas")
+    
+    def clean_snippet(block: list[str]) -> list[str]:
+        """Limpia el snippet antes de publicar."""
+        cleaned = []
+        for line in block:
+            stripped = line.strip()
+            # Eliminar console.logs y prints de debug
+            if re.search(r'console\.(log|error|warn|debug)\(', line):
+                continue
+            # Eliminar comentarios que mencionan pruebas o debug
+            if re.search(r'//.*?(TODO|FIXME|PRUEBA|debug|temporal|simplificado)', line, re.IGNORECASE):
+                continue
+            cleaned.append(line)
+        return cleaned
+    best_block = clean_snippet(best["block"])
+    return '\n'.join(best_block).strip()
 def format_for_ray(snippet):
     snippet = snippet.strip()
 
@@ -356,32 +498,6 @@ def save_output(data):
 
     print("✅ carousels.json generated")
 
-def analyze_repo(repo_path):
-    repo_data = {"structure": [], "content": {}, "summary": ""}
-    target_extensions = ('.ts', '.py', '.prisma')
-    ignore_folders = {'node_modules', 'dist', '.git', '__pycache__', 'env', '.env', 'dto'}
-    for root, dirs, files in os.walk(repo_path):
-        dirs[:] = [d for d in dirs if d not in ignore_folders]
-        for file in files:
-            if file.endswith(target_extensions):
-                full_path = os.path.join(root, file)
-                rel_path = os.path.relpath(full_path, repo_path)
-                repo_data["structure"].append(rel_path)
-                try:
-                    with open(full_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                except Exception:
-                    continue
-                is_relevant = False
-                for category, config in CONCEPT_MAP.items():
-                    if any(signal.lower() in content.lower() for signal in config["signals"]):
-                        is_relevant = True
-                        break
-                
-                if is_relevant:
-                    repo_data["content"][rel_path] = content
-    return repo_data
-
 def score_file(path):
     score = 0
     weights = {"service": 5, "guard": 4, "prisma": 4, "controller": 2, "dto": 1}
@@ -403,50 +519,67 @@ def is_valid_output(text):
     banned_phrases = ["503", "UNAVAILABLE", "API Error", "limit reached"]
     return not any(phrase in text for phrase in banned_phrases)
 
-def generate_pro_drafts(repo_data):
-    """Detección Dinámica basada en CONCEPT_MAP."""
+def generate_pro_drafts(top_files: list) -> list:
+    """
+    Genera drafts a partir de los top archivos detectados por el scanner.
+    Usa IA para extraer el snippet más valioso de cada archivo.
+    """
     drafts = []
-    
-    for path, content in repo_data["content"].items():
-        for category, config in CONCEPT_MAP.items():
-            # Buscamos si alguna señal de la categoría está en el archivo
-            found_signals = [s for s in config["signals"] if s.lower() in content.lower()]
-            if found_signals:
-                relevant_snippet = extract_best_snippet(content, config["extract_keywords"])
-                if not relevant_snippet: continue
-                base_score = config["seniority_weight"] + (len(found_signals) * 2)
-                if len(content) > 1200: base_score += 5
-                drafts.append({
-                    "score": base_score,
-                    "topic": config["series"],
-                    "signals": found_signals,
-                    "file": path,
-                    "body": f"Signals found: {', '.join(found_signals)}. Seniority weight: {config['seniority_weight']}. {config['description']}",
-                    "snippet": relevant_snippet, # Snippet más largo para mejor contexto
-                    "insight": f"Implementation of {category} patterns in production-ready code."
-                })
-    
-    # Eliminamos duplicados de temas muy cercanos y ordenamos por score
-    return sorted(drafts, key=lambda x: x['score'], reverse=True)
+    seen_topics = set()  # Para evitar duplicados de mismo tema
 
-def audit_seniority(repo_data):
-    points = 0
-    findings = []
-    senior_patterns = {
-        "idempotencyKey": (25, "Idempotency Pattern"),
-        "Transport.RMQ": (20, "Event-Driven Architecture"),
-        "Decimal": (15, "Financial Precision"),
-        "@UseGuards": (10, "Aspect-Oriented Security"),
-        "Transaction": (10, "Atomic Operations")
-    }
-    content_all = " ".join(repo_data["content"].values())
-    for p, (v, d) in senior_patterns.items():
-        if p in content_all:
-            points += v
-            findings.append(f"✅ [+{v}] {d}")
-    
-    level = "Senior/Architect" if points > 60 else "Mid-Level" if points > 30 else "Junior"
-    return points, level, findings
+    for file_data in top_files:
+        path    = file_data["path"]
+        content = file_data["content"]
+        score   = file_data["score"]
+        signals = file_data.get("concepts", [])
+
+        # Detectamos qué categorías del CONCEPT_MAP aplican
+        for category, config in CONCEPT_MAP.items():
+            found_signals = [
+                s for s in config["signals"]
+                if s.lower() in content.lower()
+            ]
+            if not found_signals:
+                continue
+
+            # Evitamos publicar el mismo tema dos veces
+            dedup_key = f"{category}_{os.path.basename(path)}"
+            if dedup_key in seen_topics:
+                continue
+            seen_topics.add(dedup_key)
+
+            # Primero intentamos extraer snippet localmente (rápido)
+            relevant_snippet = extract_best_snippet(content, config["extract_keywords"])
+
+            # Si el archivo tiene score alto y no encontramos buen snippet → usamos IA
+            if not relevant_snippet or (score > 60 and len(relevant_snippet.split('\n')) < 5):
+                print(f"        [🤖] IA extrayendo snippet de {path}...")
+                relevant_snippet = extract_snippet_with_ai(content, category, config["description"])
+
+            if not relevant_snippet:
+                continue
+
+            base_score = (
+                score +                          # score del scanner
+                config["seniority_weight"] +     # peso del concepto
+                len(found_signals) * 3           # bonus por señales encontradas
+            )
+
+            drafts.append({
+                "score":   base_score,
+                "topic":   config["series"],
+                "signals": found_signals,
+                "file":    path,
+                "snippet": relevant_snippet,
+                "body":    (
+                    f"Signals found: {', '.join(found_signals)}. "
+                    f"Seniority weight: {config['seniority_weight']}. "
+                    f"{config['description']}"
+                ),
+                "insight": f"Implementation of {category} patterns in production-ready code."
+            })
+
+    return sorted(drafts, key=lambda x: x["score"], reverse=True)
 
 def get_first_png(folder_path):
     png_files = sorted([
@@ -573,21 +706,21 @@ def upload_image(image_path):
     return asset
 
 if __name__ == "__main__":
-    REPO_PATH = os.getenv("REPO_PATH")
+    SOURCE = 'https://github.com/VittoLym/Scalable_ecommerce_api'
     
     print("[+] Step 1: Analyzing Repository...")
-    data = analyze_repo(REPO_PATH)
-
+    data = analyze_repo(SOURCE, top_n=5)
     print("[+] Step 2: Running Seniority Audit...")
     points, rank, details = audit_seniority(data)
-    print(f"    RANK: {rank} ({points}/100)")
-
+    print(f"    RANK: {rank} ({points} pts)")
+    for d in details:
+        print(f"    {d}")
     print("[+] Step 3: Generating Targeted Insights...")
-    drafts = generate_pro_drafts(data)
+    drafts = generate_pro_drafts(data["top_files"])
+    print(len(drafts))
     if drafts:
         top_drafts = drafts[:4]
         print(f"[+] Step 4: Building {len(top_drafts)} Automated Media Kits...")
-        
         for i, post_data in enumerate(top_drafts):
             print(f"    [>] Processing Kit {i+1}...")
             
@@ -606,23 +739,20 @@ if __name__ == "__main__":
             path = save_media_kit(i, post_data, linked_post, x_thread, visuals)
             print(f"    [✓] Kit {i+1} saved to: {path}")
             pngPath = get_first_png(path)
-            print(x_thread)
-            publish_linkedin(linked_post,[pngPath])
-            publish_thread_bluesky(x_thread)
+            #publish_linkedin(linked_post,[pngPath])
+            #publish_thread_bluesky(x_thread)
             time.sleep(3)
-            publish_thread_x(x_thread)
+            #publish_thread_x(x_thread)
             time.sleep(3)
-            publish_devto(
-                topic=post_data['topic'],
-                linkedin_post=linked_post,
-                snippet=post_data['snippet'],
-                series_name=post_data['topic'],  # ya tiene el nombre de la serie
-                signals=post_data['signals'],
-                published=False
-            )
+            #publish_devto(
+            #    topic=post_data['topic'],
+            #    linkedin_post=linked_post,
+            #    snippet=post_data['snippet'],
+            #    series_name=post_data['topic'],  # ya tiene el nombre de la serie
+            #    signals=post_data['signals'],
+            #    published=True
+            #)
             time.sleep(5) # Cooldown
-            break
-
         print(f"\n[#] PIPELINE COMPLETE. Content factory is ready.")
         
     
