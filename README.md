@@ -1,111 +1,95 @@
-# CAEngine 🚀
+# CAEngine (insights_engine)
 
-> **Turn any GitHub repository into social media content — automatically.**
+Analyzes a GitHub repository, finds the code that shows real engineering skill (transactions, idempotency, event-driven messaging, auth guards, caching) and turns it into ready-to-publish content: a LinkedIn post, an X thread, a code screenshot and an architecture diagram.
 
-CAEngine analyzes GitHub repositories, evaluates code quality and seniority level, extracts the most interesting technical insights, and publishes them across your social platforms without manual effort.
+> **Status:** personal project, work in progress. Content generation works end to end. Publishing modules for X, Bluesky, dev.to and LinkedIn are implemented but **disabled by default** (the calls are commented out in `main.py`).
 
----
+## How it works
 
-## What it does
+1. **Scan** the target repository and rank its files by relevance (`repo_scanner.py`).
+2. **Audit seniority**: assigns a rank and a score based on the patterns found.
+3. **Detect concepts** from five categories: concurrency, resilience, event-driven patterns, security and performance.
+4. **Extract the best snippet** with local heuristics, falling back to an LLM when the result is weak.
+5. **Generate content** with LLMs (Gemini and Groq): a LinkedIn post and an X thread.
+6. **Render visuals**: a code image (Ray.so through Playwright) and an architecture diagram (Mermaid).
+7. **Save a media kit** per topic under `content_factory/`.
 
-Most developers build great things and never talk about them. CAEngine fixes that.
+Output example:
 
-Point it at any GitHub repo and it will:
-
-1. **Analyze** the codebase — structure, complexity, commit history, and overall seniority signal
-2. **Extract** the most shareable insights — architecture decisions, interesting patterns, key features
-3. **Generate** platform-optimized content for each network
-4. **Publish** automatically across your connected accounts
-
----
-
-## Supported platforms
-
-| Platform | Status |
-|----------|--------|
-| 𝕏 (Twitter) | ✅ Live |
-| Bluesky | ✅ Live |
-| dev.to | ✅ Live |
-| LinkedIn | ✅ Live |
-| Meta (Instagram/Facebook) | 🔜 Coming soon |
-
----
+```
+content_factory/
+└── Kit_1_serie_1_real-world_concurrency_2026-06-09/
+    ├── linkedin.md
+    ├── x_thread.md
+    ├── 1_authority_shot.png
+    └── 2_architecture.png
+```
 
 ## Tech stack
 
-- **Python** — core engine
-- **GitHub API** — repository analysis and data extraction
-- **LLM integration** — content generation and insight extraction
-- Platform APIs — X, Bluesky, dev.to, LinkedIn
-
----
-
-## Use cases
-
-- **Developers** who want to build an audience without writing posts manually
-- **Open source maintainers** who want more visibility for their projects
-- **Tech teams** looking to showcase their engineering culture on social media
-- **Freelancers** building a personal brand through their work
-
----
+- Python
+- Google Gemini (`google-genai`) and Groq for content generation
+- Playwright for rendering code screenshots
+- Platform APIs: X, Bluesky, dev.to, LinkedIn (disabled by default)
 
 ## Getting started
 
 ```bash
-git clone https://github.com/devvitto/caengine
-cd caengine
+git clone https://github.com/VittoLym/insights_engine.git
+cd insights_engine
+python -m venv .venv
+.venv\Scripts\activate          # Windows (use source .venv/bin/activate on Linux/macOS)
 pip install -r requirements.txt
+playwright install chromium
+cp .env.example .env            # then fill in your keys
 ```
 
-Configure your API keys in `.env`:
-
-```env
-GITHUB_TOKEN=your_github_token
-TWITTER_API_KEY=your_key
-BLUESKY_HANDLE=your_handle
-DEVTO_API_KEY=your_key
-LINKEDIN_TOKEN=your_token
-```
-
-Run it:
+Set the repository to analyze in `main.py` (the `SOURCE` variable at the bottom of the file), then run:
 
 ```bash
-python main.py --repo https://github.com/user/repo
+python main.py
 ```
 
----
+> The target repository is currently hardcoded. Accepting it as a command-line argument is on the roadmap.
 
-## Example output
+## Configuration
 
-Given a repo, CAEngine might generate:
+Copy `.env.example` to `.env`. At minimum you need `GEMINI_API_KEY` and `GROQ_API_KEY` to generate content. The X, Bluesky, LinkedIn and dev.to variables are only needed if you enable publishing.
 
-**For X/Twitter:**
-> "Just analyzed this Node.js REST API — clean separation of concerns, solid error handling, and a smart use of middleware chains. Here's what stood out 🧵"
+## Enabling publishing
 
-**For dev.to:**
-> A full breakdown article with code snippets, architecture insights, and lessons learned.
+In the `__main__` block of `main.py`, the publish calls are commented out. Uncomment only the platforms you have configured:
 
-**For LinkedIn:**
-> A professional post highlighting the engineering decisions and their business impact.
+```python
+# publish_linkedin(linked_post, [pngPath])
+# publish_thread_bluesky(x_thread)
+# publish_thread_x(x_thread)
+# publish_devto(...)
+```
 
----
+Review the generated content in `content_factory/` before you publish anything.
+
+## Privacy note
+
+To render visuals, code snippets are sent to third-party services: Ray.so (code image) and mermaid.ink (diagram). Do not run the tool on private or confidential repositories unless you are comfortable with that.
 
 ## Roadmap
 
-- [x] GitHub repository analysis
-- [x] Seniority scoring system
-- [x] Multi-platform publishing
+- [ ] Accept the target repository as a CLI argument
+- [ ] Split `main.py` into modules (scanner, content, media, publishers)
+- [ ] Remove unused code left over from earlier iterations
+- [ ] Unit tests for scoring and snippet extraction
 - [ ] Meta (Instagram / Facebook) support
 - [ ] Scheduled publishing
-- [ ] Web UI / dashboard
-- [ ] Repo comparison mode
 
----
+## How I used AI in this project
+
+- **Tools used:** [TODO: e.g. Claude, Gemini, Copilot]
+- **What I delegated:** [TODO]
+- **What I decided and wrote myself:** [TODO]
+- **How I reviewed AI output:** [TODO]
 
 ## Author
 
-Built by [Vitto](https://www.linkedin.com/in/devvitto/) — Full Stack Developer & Automation Specialist based in Argentina.
-
----
-
-*CAEngine is part of a broader set of developer tools I'm building. If you're interested in automating your own workflows, feel free to reach out.*
+**Alexander Assón**, Backend / Full Stack Engineer, Mendoza, Argentina.
+[LinkedIn](https://linkedin.com/in/devvitto) · [GitHub](https://github.com/VittoLym)

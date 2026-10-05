@@ -1,6 +1,8 @@
 .env
+.venv/
 linkedin.md
 visual_strategy.txt
 x_thread.md
 content_factory
-__pycache__
+__pycache__.venv/
+*.pyc
