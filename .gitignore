@@ -1,8 +1,17 @@
+# Secrets
 .env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+venv/
 .venv/
+
+# Generated output
+content_factory/
+carousels.json
 linkedin.md
 visual_strategy.txt
 x_thread.md
-content_factory
-__pycache__.venv/
-*.pyc
