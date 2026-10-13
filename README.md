@@ -83,12 +83,10 @@ To render visuals, code snippets are sent to third-party services: Ray.so (code 
 - [ ] Scheduled publishing
 
 ## How I used AI in this project
-
-- **Tools used:** [TODO: e.g. Claude, Gemini, Copilot]
-- **What I delegated:** [TODO]
-- **What I decided and wrote myself:** [TODO]
-- **How I reviewed AI output:** [TODO]
-
+    ## How I used AI in this project
+    - **What I did myself:** the research, the design of the tool, the setup of every API account and key (Gemini, Groq, X, Bluesky, dev.to, LinkedIn) and the validation of the code.
+    - **What I delegated:** AI assistants wrote the repetitive parts of the code.
+    - **How I reviewed it:** I read and validated the generated code and ran the tool end to end, checking the content it produces before publishing anything.
 ## Author
 
 **Alexander Assón**, Backend / Full Stack Engineer, Mendoza, Argentina.
