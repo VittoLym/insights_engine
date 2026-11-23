@@ -112,7 +112,8 @@ def clone_repo(github_url: str) -> str:
             ["git", "clone", "--depth=1", github_url, tmp_dir],
             check=True,
             capture_output=True,
-            text=True
+            text=True,
+            timeout=120
         )
         print(f"    [✓] Repo clonado en {tmp_dir}")
         return tmp_dir

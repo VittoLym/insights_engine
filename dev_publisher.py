@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 DEVTO_API_KEY = os.getenv("DEVTO_API_KEY")
+TIMEOUT = 20
 
 def linkedin_to_article(topic, linkedin_post, snippet, series_name):
     """
@@ -89,7 +90,8 @@ def publish_devto(topic, linkedin_post, snippet, series_name, signals, published
                 "api-key": DEVTO_API_KEY,
                 "Content-Type": "application/json"
             },
-            json=payload
+            json=payload,
+            timeout=TIMEOUT
         )
         r.raise_for_status()
         data = r.json()

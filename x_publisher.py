@@ -10,6 +10,7 @@ API_KEY             = os.getenv("X_API_KEY")
 API_SECRET          = os.getenv("X_API_SECRET")
 ACCESS_TOKEN        = os.getenv("X_ACCESS_TOKEN")
 ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET")
+TIMEOUT = 20
 
 def get_auth():
     return OAuth1(API_KEY, API_SECRET, ACCESS_TOKEN, ACCESS_TOKEN_SECRET)
@@ -22,7 +23,7 @@ def post_tweet(text, reply_to_id=None):
     if reply_to_id:
         payload["reply"] = {"in_reply_to_tweet_id": reply_to_id}
 
-    r = requests.post(url, auth=get_auth(), json=payload)
+    r = requests.post(url, auth=get_auth(), json=payload,timeout=TIMEOUT )
     r.raise_for_status()
     return r.json()  # tiene id y text
 

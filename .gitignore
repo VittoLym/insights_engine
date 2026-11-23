@@ -4,5 +4,6 @@ linkedin.md
 visual_strategy.txt
 x_thread.md
 content_factory
-__pycache__.venv/
+__pycache__
 *.pyc
+insi/

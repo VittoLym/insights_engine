@@ -1,7 +1,7 @@
 import os
 import time
 from datetime import datetime
-from gemini_adp import refine_post,generate_visual_prompts,generate_x_thread 
+from gemini_adp import refine_post,generate_visual_prompts,generate_x_thread,extract_snippet_with_ai
 import re
 import json
 from textwrap import dedent
@@ -13,7 +13,7 @@ from bluesky_publisher import publish_thread_bluesky
 from x_publisher import publish_thread_x
 from dev_publisher import publish_devto
 from repo_scanner import analyze_repo, audit_seniority
-from gemini_adp import extract_snippet_with_ai
+import argparse
 CONCEPT_MAP = {
     "CONCURRENCY": {
         "signals": ["transaction", "lock", "stock", "decrement", "atomic"],
@@ -64,6 +64,7 @@ TARGET_KEYWORDS = [
 MAX_SNIPPET_LINES = 15
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PERSON_URN   = os.getenv("URN_PERSON")
+TIMEOUT = 20
 
 def generate_architecture_diagram(topic, folder_path):
     """Genera un diagrama Mermaid basado en el tópico del post."""
@@ -389,6 +390,7 @@ def extract_best_snippet(content: str, keywords: list) -> str | None:
         return cleaned
     best_block = clean_snippet(best["block"])
     return '\n'.join(best_block).strip()
+
 def format_for_ray(snippet):
     snippet = snippet.strip()
 
@@ -620,7 +622,8 @@ def register_upload():
     r = requests.post(
         url,
         headers=headers,
-        json=body
+        json=body,
+        timeout=TIMEOUT
     )
 
     return r.json()
@@ -662,7 +665,8 @@ def publish_linkedin(text: str, media_paths: str=[]):
         r = requests.post(
             url,
             headers=headers,
-            json=body
+            json=body,
+            timeout=TIMEOUT
         )
 
         print(f"STATUS: {r.status_code}")
@@ -698,18 +702,29 @@ def upload_image(image_path):
     r = requests.put(
         upload_url,
         data=image_binary,
-        headers=headers
+        headers=headers,
+        timeout=TIMEOUT
     )
 
     print("UPLOAD:", r.status_code)
 
     return asset
 
+def parse_args():
+    p = argparse.ArgumentParser(description="Convierte un repo en contenido para redes")
+    p.add_argument("--repo", required=True, help="URL de GitHub o path local")
+    p.add_argument("--top-n", type=int, default=5, help="Archivos a analizar")
+    p.add_argument("--kits", type=int, default=4, help="Cantidad de kits a generar")
+    p.add_argument("--publish", action="store_true",
+                   help="Publica en las redes. Sin esto solo genera los kits en content_factory/")
+    return p.parse_args()
+
 if __name__ == "__main__":
+    args = parse_args()
     SOURCE = 'https://github.com/VittoLym/Scalable_ecommerce_api'
     
     print("[+] Step 1: Analyzing Repository...")
-    data = analyze_repo(SOURCE, top_n=5)
+    data = analyze_repo(args.repo, top_n=args.top_n)
     print("[+] Step 2: Running Seniority Audit...")
     points, rank, details = audit_seniority(data)
     print(f"    RANK: {rank} ({points} pts)")

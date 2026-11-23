@@ -6,7 +6,7 @@ load_dotenv()
 
 BLUESKY_HANDLE = os.getenv("BS_HANDLE")  # o tu dominio custom
 BLUESKY_PASSWORD = os.getenv("BS_PASSWORD")       # OJO: usar App Password, no tu contraseña real
-
+TIMEOUT = 20
 def create_session():
     """Login y obtención del token."""
     r = requests.post(
@@ -14,7 +14,8 @@ def create_session():
         json={
             "identifier": BLUESKY_HANDLE,
             "password": BLUESKY_PASSWORD
-        }
+        },
+        timeout=TIMEOUT
     )
     r.raise_for_status()
     return r.json()  # tiene accessJwt y did
@@ -41,7 +42,8 @@ def publish_post(session, text, reply_to=None):
             "repo": session["did"],
             "collection": "app.bsky.feed.post",
             "record": record
-        }
+        },
+        timeout=TIMEOUT
     )
     r.raise_for_status()
     return r.json()  # tiene uri y cid del post creado
