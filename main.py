@@ -731,7 +731,7 @@ if __name__ == "__main__":
     for d in details:
         print(f"    {d}")
     print("[+] Step 3: Generating Targeted Insights...")
-        drafts = generate_pro_drafts(data["top_files"])
+    drafts = generate_pro_drafts(data["top_files"])
     if drafts:
         top_drafts = drafts[:4]
         print(f"[+] Step 4: Building {len(top_drafts)} Automated Media Kits...")
