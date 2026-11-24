@@ -7,8 +7,12 @@ from groq import Groq
 
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL")
+GROQ_MODEL = os.getenv("GROQ_MODEL")
 client = genai.Client(api_key=API_KEY)
 client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
+if not GEMINI_MODEL or not GROQ_MODEL:
+    raise SystemExit("Definí GEMINI_MODEL y GROQ_MODEL en tu .env (ver list_models.py)")
 
 
 def extract_snippet_with_ai(content: str, category: str, description: str) -> str | None:
@@ -35,7 +39,7 @@ def extract_snippet_with_ai(content: str, category: str, description: str) -> st
     # Intentamos con Gemini primero
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model=GEMINI_MODEL,
             contents=prompt,
         )
         text = response.text.strip()
@@ -154,7 +158,7 @@ def refine_post(topic, body, snippet):
         # Intento 1: Gemini
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model=GEMINI_MODEL,
                 contents=enriched_body,
                 config={"system_instruction": system_persona}
             )
@@ -207,7 +211,7 @@ def generate_x_thread(topic, final_post):
     try:
         time.sleep(2)
         response = client.models.generate_content(
-            model="gemini-3-flash-preview", 
+            model=GEMINI_MODEL, 
             contents=prompt,
             config={"system_instruction": system_instruction}
         )
@@ -219,7 +223,7 @@ def generate_x_thread(topic, final_post):
         print(f"    [❌] Gemini error: {e}")
     try:
             response = client_groq.chat.completions.create(
-                model="llama-3.3-70b-versatile",
+                model=GROQ_MODEL,
                 messages=[
                     {"role": "system", "content": system_instruction},
                     {"role": "user", "content": prompt}
@@ -233,6 +237,7 @@ def generate_x_thread(topic, final_post):
                 return text
     except Exception as e:
         print(f"    [❌] Groq error (attempt: {e}")
+        return None
 
 def generate_visual_prompts(topic, snippet):
     diagram_concept = "a system architecture flow"

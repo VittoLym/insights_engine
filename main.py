@@ -731,34 +731,42 @@ if __name__ == "__main__":
     for d in details:
         print(f"    {d}")
     print("[+] Step 3: Generating Targeted Insights...")
-    drafts = generate_pro_drafts(data["top_files"])
-    print(len(drafts))
+        drafts = generate_pro_drafts(data["top_files"])
     if drafts:
         top_drafts = drafts[:4]
         print(f"[+] Step 4: Building {len(top_drafts)} Automated Media Kits...")
+        failures = 0
         for i, post_data in enumerate(top_drafts):
             print(f"    [>] Processing Kit {i+1}...")
-            
-            # Generación con IA
-            linked_post = refine_post(post_data['topic'], post_data['body'], post_data['snippet'])
-            time.sleep(2)
-            
-            # Manejo del error en X Thread
-            x_thread = generate_x_thread(post_data['topic'], linked_post)
-            if "Error" in x_thread:
-                x_thread = "⚠️ API Error. Please manually convert the LinkedIn post to a thread."
-            
-            visuals = generate_visual_prompts(post_data['topic'], post_data['snippet'])
 
-            # Guardar en su propia carpeta
+            linked_post = refine_post(post_data['topic'], post_data['body'], post_data['snippet'])
+            if not linked_post:
+                failures += 1
+                print(f"    [⚠️] Kit {i+1} omitido: no se pudo generar el post (revisá modelos y keys).")
+                if failures >= 2:
+                    print("    [⛔] 2 fallos seguidos: corto el pipeline para no gastar cuota.")
+                    break
+                continue
+            failures = 0
+            time.sleep(2)
+
+            x_thread = generate_x_thread(post_data['topic'], linked_post)
+            if not x_thread:
+                print("    [⚠️] Hilo de X no generado; el kit se guarda solo con el post de LinkedIn.")
+                x_thread = "(hilo no generado)"
+
+            visuals = generate_visual_prompts(post_data['topic'], post_data['snippet'])
             path = save_media_kit(i, post_data, linked_post, x_thread, visuals)
             print(f"    [✓] Kit {i+1} saved to: {path}")
+            # (publicación: la dejamos comentada hasta la Fase 1)
+            time.sleep(5)  # Cooldown
+            print("\n[#] PIPELINE COMPLETE. Content factory is ready.")
             pngPath = get_first_png(path)
             #publish_linkedin(linked_post,[pngPath])
             #publish_thread_bluesky(x_thread)
-            time.sleep(3)
+            #time.sleep(3)
             #publish_thread_x(x_thread)
-            time.sleep(3)
+            #time.sleep(3)
             #publish_devto(
             #    topic=post_data['topic'],
             #    linkedin_post=linked_post,
