@@ -14,8 +14,8 @@ CODE_EXTENSIONS = {
     '.php',                          # PHP
     '.cs',                           # C#
 }
+TEST_TOKENS = {"spec", "test", "tests", "mock", "mocks", "e2e", "seed", "fixture", "fixtures"}
 
-# Carpetas que nunca tienen lógica interesante
 IGNORE_FOLDERS = {
     'node_modules', 'dist', 'build', '.git', '__pycache__',
     'venv', '.venv', 'env', 'coverage', '.nyc_output',
@@ -136,6 +136,9 @@ def get_repo(source: str) -> tuple[str, bool]:
     else:
         return source, False
 
+def _name_tokens(filename: str) -> set:
+    name = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', filename)
+    return {t for t in re.split(r'[^a-zA-Z0-9]+', name.lower()) if t}
 
 # ── Scoring heurístico local ──────────────────────────────────────
 
@@ -230,8 +233,11 @@ def analyze_repo(source: str, top_n: int = 8) -> dict:
                     continue
                 if file in IGNORE_FILES:
                     continue
-
+                if _name_tokens(file) & TEST_TOKENS:
+                    continue
                 full_path = os.path.join(root, file)
+                if os.path.islink(full_path):
+                    continue
                 rel_path = os.path.relpath(full_path, repo_path)
 
                 try:

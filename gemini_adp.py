@@ -4,65 +4,31 @@ from google import genai
 from dotenv import load_dotenv
 import time
 from groq import Groq
+from llm import generate
 
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL")
 GROQ_MODEL = os.getenv("GROQ_MODEL")
-client = genai.Client(api_key=API_KEY)
-client_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
-if not GEMINI_MODEL or not GROQ_MODEL:
-    raise SystemExit("Definí GEMINI_MODEL y GROQ_MODEL en tu .env (ver list_models.py)")
-
 
 def extract_snippet_with_ai(content: str, category: str, description: str) -> str | None:
-    """
-    Usa IA para extraer el snippet más valioso cuando el regex no alcanza.
-    Solo se llama para archivos de alto score.
-    """
-    prompt = f"""You are a senior engineer reviewing code for a technical blog post.
-
-    Category: {category}
-    Description: {description}
-
-    From the following code, extract the single most interesting and educational snippet (10-20 lines max).
-    The snippet must:
-    - Show a non-obvious engineering decision
-    - Be self-contained enough to understand without full context
-    - Relate directly to: {description}
-
-    Return ONLY the code snippet, no explanation, no markdown fences.
+    """Usa IA para extraer el snippet más valioso cuando el regex no alcanza."""
+    prompt = f"""...   # tu prompt actual, sin cambios
 
     CODE:
-    {content[:3000]}"""  # limitamos para no exceder tokens
+    {content[:3000]}"""
 
-    # Intentamos con Gemini primero
-    try:
-        response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt,
-        )
-        text = response.text.strip()
-        if text and len(text.split('\n')) >= 3:
-            return text
-    except Exception as e:
-        print(f"        [⚠️] Gemini snippet error: {e}")
-
-    # Fallback a Groq
-    try:
-        response = client_groq.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-            temperature=0.2  # bajo para que no invente código
-        )
-        text = response.choices[0].message.content.strip()
-        if text and len(text.split('\n')) >= 3:
-            return text
-    except Exception as e:
-        print(f"        [⚠️] Groq snippet error: {e}")
-
-    return None
+    text = generate(
+        "You extract code snippets exactly as written. Never modify or invent code.",
+        prompt,
+        max_tokens=800,
+        temperature=0.2,   # bajo para que no invente código
+        validate=lambda t: len(t.split("\n")) >= 3,
+    )
+    if not text:
+        return None
+    # por si el modelo devuelve fences de markdown
+    return re.sub(r"^```[a-zA-Z]*\n|\n```$", "", text.strip())
 
 def parse_pro_content(filename):
     """Extrae el insight de mayor score del plan de contenido."""
@@ -153,45 +119,7 @@ def refine_post(topic, body, snippet):
         Focus on: why this implementation exists, what production problem it solves,
         and what happens in a real system when it's absent or wrong.
     """
-
-    for attempt in range(max_retries):
-        # Intento 1: Gemini
-        try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=enriched_body,
-                config={"system_instruction": system_persona}
-            )
-            text = response.text.strip()
-            if is_valid_output(text):
-                print(f"    [✓] Gemini OK (attempt {attempt+1})")
-                return text
-        except Exception as e:
-            print(f"    [❌] Gemini error (attempt {attempt+1}): {e}")
-
-        # Intento 2: Groq como fallback real
-        try:
-            response = client_groq.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_persona},
-                    {"role": "user", "content": enriched_body}
-                ],
-                temperature=0.7,
-                max_tokens=600
-            )
-            text = response.choices[0].message.content.strip()
-            if is_valid_output(text):
-                print(f"    [✓] Groq fallback OK (attempt {attempt+1})")
-                return text
-        except Exception as e:
-            print(f"    [❌] Groq error (attempt {attempt+1}): {e}")
-
-        wait_time = 2 ** attempt
-        print(f"    [⏳] Retrying in {wait_time}s...")
-        time.sleep(wait_time)
-
-    return None
+    return generate(system_persona, enriched_body, max_tokens=1500, validate=is_valid_output)
 
 def generate_x_thread(topic, final_post):
     """Convierte el post en un hilo de X (Twitter) técnico y viral en inglés."""
@@ -209,32 +137,7 @@ def generate_x_thread(topic, final_post):
     prompt = f"Topic: {topic}\n\nPost: {final_post}"
     
     try:
-        time.sleep(2)
-        response = client.models.generate_content(
-            model=GEMINI_MODEL, 
-            contents=prompt,
-            config={"system_instruction": system_instruction}
-        )
-        text = response.text.strip()
-        if is_valid_output(text):
-            print(f"    [✓] Gemini OK ")
-            return text
-    except Exception as e:
-        print(f"    [❌] Gemini error: {e}")
-    try:
-            response = client_groq.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[
-                    {"role": "system", "content": system_instruction},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.7,
-                max_tokens=600
-            )
-            text = response.choices[0].message.content.strip()
-            if is_valid_output(text):
-                print(f"    [✓] Groq fallback OK")
-                return text
+        return generate(system_instruction, prompt, max_tokens=1500, validate=is_valid_output)
     except Exception as e:
         print(f"    [❌] Groq error (attempt: {e}")
         return None

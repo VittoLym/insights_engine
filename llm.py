@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 _clients = {}
+_cooldown = {}          # "provider:modelo" -> momento hasta el que se lo saltea
+COOLDOWN_SECONDS = 90
+_TRANSIENT = ("503", "unavailable", "429", "resource_exhausted", "rate limit", "overloaded")
 
 
 def _chain():
@@ -33,13 +36,13 @@ def _client(provider):
     return _clients[provider]
 
 
-def _call(provider, model, system, prompt, max_tokens):
+def _call(provider, model, system, prompt, max_tokens, temperature):
     client = _client(provider)
     if provider == "gemini":
         resp = client.models.generate_content(
             model=model,
             contents=prompt,
-            config={"system_instruction": system, "max_output_tokens": max_tokens},
+            config={"system_instruction": system, "max_output_tokens": max_tokens, "temperature": temperature},
         )
         return resp.text
     kwargs = {}
@@ -48,23 +51,27 @@ def _call(provider, model, system, prompt, max_tokens):
     resp = client.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-        temperature=0.7,
+        temperature=temperature,
         max_completion_tokens=max_tokens,
         **kwargs,
     )
     return resp.choices[0].message.content
 
 
-def generate(system, prompt, max_tokens=2000, validate=None, rounds=2):
-    """Prueba cada modelo de la cadena en orden. Devuelve el texto o None si todos fallan."""
+def generate(system, prompt, max_tokens=2000, validate=None, rounds=2, temperature=0.7):
     chain = _chain()
     for r in range(rounds):
-        for provider, model in chain:
+        now = time.time()
+        available = [c for c in chain if _cooldown.get(f"{c[0]}:{c[1]}", 0) <= now] or chain
+        for provider, model in available:
             tag = f"{provider}:{model}"
             try:
-                text = (_call(provider, model, system, prompt, max_tokens) or "").strip()
+                text = (_call(provider, model, system, prompt, max_tokens, temperature) or "").strip()
             except Exception as e:
-                print(f"    [❌] {tag}: {str(e)[:160]}")
+                msg = str(e)
+                print(f"    [❌] {tag}: {msg[:160]}")
+                if any(t in msg.lower() for t in _TRANSIENT):
+                    _cooldown[tag] = time.time() + COOLDOWN_SECONDS
                 continue
             if text and (validate is None or validate(text)):
                 print(f"    [✓] {tag}")

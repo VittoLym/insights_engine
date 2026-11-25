@@ -83,19 +83,19 @@ def generate_architecture_diagram(topic, folder_path):
     
     # Codificamos para Mermaid.ink
     mermaid_bytes = mermaid_code.encode('utf-8')
-    base64_mermaid = base64.b64encode(mermaid_bytes).decode('utf-8')
+    base64_mermaid = base64.urlsafe_b64encode(mermaid_code.encode("utf-8")).decode("utf-8")
     img_url = f"https://mermaid.ink/img/{base64_mermaid}?type=png&bgColor=1a1b26"
-    
+
     try:
         res = requests.get(img_url, timeout=20)
         if res.status_code == 200:
-            with open(f"{folder_path}/2_architecture.png", 'wb') as f:
+            with open(f"{folder_path}/2_architecture.png", "wb") as f:
                 f.write(res.content)
+            print("        [✓] Diagrama guardado")
             return True
+        print(f"        [⚠️] mermaid.ink respondió {res.status_code}")
     except Exception as e:
-        print(e)
-        return False
-    
+        print(f"        [⚠️] Diagrama falló: {e}")
     return False
 
 def generate_code_image(snippet, folder_path, title="Senior Dev Insight"):
