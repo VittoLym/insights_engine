@@ -67,6 +67,7 @@ def generate(system, prompt, max_tokens=2000, validate=None, rounds=2, temperatu
             tag = f"{provider}:{model}"
             try:
                 text = (_call(provider, model, system, prompt, max_tokens, temperature) or "").strip()
+                text = text.replace("\u2011", "-").replace("\u00a0", " ").replace("\u202f", " ")
             except Exception as e:
                 msg = str(e)
                 print(f"    [❌] {tag}: {msg[:160]}")
@@ -77,6 +78,14 @@ def generate(system, prompt, max_tokens=2000, validate=None, rounds=2, temperatu
                 print(f"    [✓] {tag}")
                 return text
             print(f"    [⚠️] {tag}: respuesta vacía o inválida")
+            if not text:
+                print(f"    [⚠️] {tag}: respuesta vacía")
+                continue
+            if validate is not None and not validate(text):
+                print(f"    [⚠️] {tag}: rechazada por validate: {text[:80]!r}")
+                continue
+            print(f"    [✓] {tag}")
+            return text
         if r < rounds - 1:
             time.sleep(2 ** (r + 1))
     return None

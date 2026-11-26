@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 import time
 from groq import Groq
 from llm import generate
+import json
 
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
@@ -18,6 +19,8 @@ LINKEDIN_SYSTEM = """You write LinkedIn posts for a backend developer with about
     and never mention years of experience.
 
     GROUNDING (most important rule):
+    - The author's note is about the whole project. Use it only if it clearly relates to THIS snippet; otherwise ignore it completely.
+    - Never say the author is "considering", "planning" or "moving to" something unless the note says so. Suggest alternatives only as a question.
     - Only state what is visible in the code snippet or in the author's note.
     - Do NOT invent numbers, TTLs, latencies, traffic, infrastructure (Redis, replicas, queues, logs),
     algorithms or libraries that are not in the snippet. If you are unsure, leave it out.
@@ -33,7 +36,7 @@ LINKEDIN_SYSTEM = """You write LinkedIn posts for a backend developer with about
     - Never sound like an AI summary. Talk about decisions, not syntax.
 
     STRUCTURE:
-    1. Hook: one concrete engineering tension you can see in this code.
+    1. Hook: a concrete fact visible in the code (never "I am balancing/weighing...")
     2. What the code does and why, in 2-3 sentences, anchored in "my project".
     3. The cost or risk that follows from this design (only what the code implies).
     4. What you would change, or an alternative you are weighing (only if the note or the code suggests one).
@@ -41,6 +44,14 @@ LINKEDIN_SYSTEM = """You write LinkedIn posts for a backend developer with about
 
     Output ONLY the post text, written in the requested language."""
 
+THREAD_SYSTEM = """You turn a LinkedIn post into an X thread.
+        - Do NOT add facts, numbers, tools or recommendations that are not in the post.
+        - Keep first person, the same voice and the same language as the post.
+        - 4 to 6 tweets. Each tweet: max 260 characters, plain text, no markdown,
+        no hashtags, no emojis, no numbering.
+        - Tweet 1 is the hook. The last tweet is the question from the post.
+        - Output ONLY valid JSON: {"tweets": ["...", "..."]}
+    """
 
 def extract_snippet_with_ai(content: str, category: str, description: str) -> str | None:
     """Usa IA para extraer el snippet más valioso cuando el regex no alcanza."""
@@ -117,7 +128,7 @@ def refine_post(topic, snippet, file_path, project, author_note=None, language="
         Project: {project}
         File: {file_path}
         Theme: {topic}
-        Author's note (their own words, the only source for motives): {author_note or "(none given)"}
+        Project-level note from the author (may not relate to this file): {author_note or "(none given)"}
 
         Code snippet:
         ```{fence}
@@ -126,26 +137,27 @@ def refine_post(topic, snippet, file_path, project, author_note=None, language="
         Do NOT summarize the code line by line. Focus on the decision behind it and its trade-off.
     """
     return generate(LINKEDIN_SYSTEM, user_prompt, max_tokens=1500,temperature=0.4, validate=is_valid_output)
-def generate_x_thread(topic, final_post):
-    """Convierte el post en un hilo de X (Twitter) técnico y viral en inglés."""
-    system_instruction = (
-        "You are a technical ghostwriter for Senior Engineers. "
-        "Convert the input into a 5-tweet X thread. "
-        "Rules: "
-        "1. Tweet 1: High-impact hook (The 'Why' or a strong opinion). "
-        "2. Tweets 2-4: The 'Technical Meat' (One key takeaway per tweet). "
-        "3. Tweet 5: Closing takeaway and CTA (Call to Action). "
-        "4. Tone: Punchy, direct, no emojis unless they add technical context. "
-        "5. Language: English."
-    )
-    
-    prompt = f"Topic: {topic}\n\nPost: {final_post}"
-    
+
+def parse_thread_json(text, max_len=270, min_tweets=3, max_tweets=7):
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
     try:
-        return generate(system_instruction, prompt, max_tokens=1500, validate=is_valid_output)
-    except Exception as e:
-        print(f"    [❌] Groq error (attempt: {e}")
+        tweets = json.loads(cleaned)["tweets"]
+    except (ValueError, KeyError, TypeError):
         return None
+    if not isinstance(tweets, list):
+        return None
+    tweets = [t.strip() for t in tweets if isinstance(t, str) and t.strip()]
+    if not (min_tweets <= len(tweets) <= max_tweets) or any(len(t) > max_len for t in tweets):
+        return None
+    return tweets
+
+def generate_x_thread(topic, final_post):
+    text = generate(THREAD_SYSTEM, f"LinkedIn post:\n\n{final_post}", max_tokens=1500,
+                    temperature=0.4, validate=lambda t: parse_thread_json(t) is not None)
+    if not text:
+        return None
+    tweets = parse_thread_json(text)
+    return "\n".join(f"{i}/{len(tweets)} {t}" for i, t in enumerate(tweets, 1))
 
 def generate_visual_prompts(topic, snippet):
     diagram_concept = "a system architecture flow"
