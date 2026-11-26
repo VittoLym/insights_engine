@@ -12,6 +12,7 @@ from playwright.sync_api import sync_playwright
 from publishers.bluesky_publisher import publish_thread_bluesky
 from publishers.x_publisher import publish_thread_x
 from publishers.dev_publisher import publish_devto
+from publishers.linkedin_publisher import publish_linkedin, get_first_png
 from scanner.repo_scanner import analyze_repo, audit_seniority
 from render import generate_code_image, trim_snippet_for_rayso, generate_architecture_diagram
 from llm import generate
@@ -492,140 +493,23 @@ def generate_pro_drafts(top_files: list) -> list:
                 "insight": f"Implementation of {category} patterns in production-ready code."
             })
 
-    return sorted(drafts, key=lambda x: x["score"], reverse=True)
-
-def get_first_png(folder_path):
-    png_files = sorted([
-        f for f in os.listdir(folder_path)
-        if f.lower().endswith(".png")
-    ])
-
-    if not png_files:
-        return None
-
-    return os.path.join(folder_path, png_files[0])
-
-def register_upload():
-    url = "https://api.linkedin.com/v2/assets?action=registerUpload"
-
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Restli-Protocol-Version": "2.0.0",
-        "LinkedIn-Version": "202501"
-    }
-
-    body = {
-        "registerUploadRequest": {
-            "recipes": [
-                "urn:li:digitalmediaRecipe:feedshare-image"
-            ],
-            "owner": PERSON_URN,
-            "serviceRelationships": [
-                {
-                    "relationshipType": "OWNER",
-                    "identifier": "urn:li:userGeneratedContent"
-                }
-            ]
-        }
-    }
-
-    r = requests.post(
-        url,
-        headers=headers,
-        json=body,
-        timeout=TIMEOUT
-    )
-
-    return r.json()
-
-def publish_linkedin(text: str, media_paths: str=[]):
-    media_assets = []
-    for path in media_paths:
-        asset = upload_image(path)
-        media_assets.append({
-            "status": "READY",
-            "media": asset
-        })
-    url = "https://api.linkedin.com/v2/ugcPosts"
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Restli-Protocol-Version": "2.0.0"
-    }
-    body = {
-        "author": PERSON_URN,
-        "lifecycleState": "PUBLISHED",
-        "specificContent": {
-            "com.linkedin.ugc.ShareContent": {
-                "shareCommentary": {"text": text},
-                "shareMediaCategory": (
-                    "IMAGE"
-                    if media_assets
-                    else "NONE"
-                ),
-                "media": media_assets
-            }
-            
-        },
-        "visibility": {
-            "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
-        }
-    }
-    try:
-        r = requests.post(
-            url,
-            headers=headers,
-            json=body,
-            timeout=TIMEOUT
-        )
-
-        print(f"STATUS: {r.status_code}")
-        print("RAW RESPONSE:")
-        print(r.text)
-
-        return r.status_code, r.json()
-
-    except Exception as e:
-        print("❌ Publish error:", e)
-        return None, str(e)
-
-def upload_image(image_path):
-
-    upload_data = register_upload()
-
-    upload_url = (
-        upload_data["value"]
-        ["uploadMechanism"]
-        ["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"]
-        ["uploadUrl"]
-    )
-
-    asset = upload_data["value"]["asset"]
-
-    with open(image_path, "rb") as f:
-        image_binary = f.read()
-
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}"
-    }
-
-    r = requests.put(
-        upload_url,
-        data=image_binary,
-        headers=headers,
-        timeout=TIMEOUT
-    )
-
-    print("UPLOAD:", r.status_code)
-
-    return asset
+    ordered = sorted(drafts, key=lambda x: x["score"], reverse=True)
+    result, used_series, used_files = [], set(), set()
+    for d in ordered:
+        if d["topic"] in used_series or d["file"] in used_files:
+            continue
+        used_series.add(d["topic"])
+        used_files.add(d["file"])
+        result.append(d)
+    return result
 
 def parse_args():
     p = argparse.ArgumentParser(description="Convierte un repo en contenido para redes")
     p.add_argument("--repo", required=True, help="URL de GitHub o path local")
     p.add_argument("--top-n", type=int, default=5, help="Archivos a analizar")
     p.add_argument("--kits", type=int, default=4, help="Cantidad de kits a generar")
+    p.add_argument("--note", default=None,
+               help="1-2 frases tuyas sobre este proyecto: el problema más difícil, qué decidiste")
     p.add_argument("--publish", action="store_true",
                    help="Publica en las redes. Sin esto solo genera los kits en content_factory/")
     return p.parse_args()
@@ -650,7 +534,14 @@ if __name__ == "__main__":
         for i, post_data in enumerate(top_drafts):
             print(f"    [>] Processing Kit {i+1}...")
 
-            linked_post = refine_post(post_data['topic'], post_data['body'], post_data['snippet'])
+            project = args.repo.rstrip("/").split("/")[-1]
+            linked_post = refine_post(
+                topic=post_data["topic"],
+                snippet=post_data["snippet"],
+                file_path=post_data["file"],
+                project=project,
+                author_note=args.note,
+            )
             if not linked_post:
                 failures += 1
                 print(f"    [⚠️] Kit {i+1} omitido: no se pudo generar el post (revisá modelos y keys).")
@@ -671,7 +562,6 @@ if __name__ == "__main__":
             print(f"    [✓] Kit {i+1} saved to: {path}")
             # (publicación: la dejamos comentada hasta la Fase 1)
             time.sleep(5)  # Cooldown
-            print("\n[#] PIPELINE COMPLETE. Content factory is ready.")
             pngPath = get_first_png(path)
             #publish_linkedin(linked_post,[pngPath])
             #publish_thread_bluesky(x_thread)

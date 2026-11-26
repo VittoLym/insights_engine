@@ -10,6 +10,37 @@ load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL")
 GROQ_MODEL = os.getenv("GROQ_MODEL")
+_FENCE_LANG = {"ts": "typescript", "tsx": "tsx", "js": "javascript", "py": "python", "go": "go"}
+
+LINKEDIN_SYSTEM = """You write LinkedIn posts for a backend developer with about 4 years of experience
+    who builds real projects and shares what he learns while building them.
+    Write in first person about HIS project and HIS decisions. Never call yourself "senior"
+    and never mention years of experience.
+
+    GROUNDING (most important rule):
+    - Only state what is visible in the code snippet or in the author's note.
+    - Do NOT invent numbers, TTLs, latencies, traffic, infrastructure (Redis, replicas, queues, logs),
+    algorithms or libraries that are not in the snippet. If you are unsure, leave it out.
+    - Do not claim that real incidents or outages happened. Talk about what COULD go wrong in this design.
+    - If there is no author's note, do not invent motives: describe the design and its visible trade-offs.
+
+    STYLE:
+    - Max 180 words, plain paragraphs. No headers, no emojis, no hashtags, max 3 bullets.
+    - No corporate words: robust, scalable, leverage, innovative, game-changer.
+    - No dramatic or absolute words (brutal, purely, always, never) unless the code proves it.
+    - No preachy openings ("Stop doing X", "Most devs...", "You're doing X wrong").
+    - Do not explain what well-known tools (JWT, bcrypt, Prisma) are.
+    - Never sound like an AI summary. Talk about decisions, not syntax.
+
+    STRUCTURE:
+    1. Hook: one concrete engineering tension you can see in this code.
+    2. What the code does and why, in 2-3 sentences, anchored in "my project".
+    3. The cost or risk that follows from this design (only what the code implies).
+    4. What you would change, or an alternative you are weighing (only if the note or the code suggests one).
+    5. One genuine question a developer could actually debate.
+
+    Output ONLY the post text, written in the requested language."""
+
 
 def extract_snippet_with_ai(content: str, category: str, description: str) -> str | None:
     """Usa IA para extraer el snippet más valioso cuando el regex no alcanza."""
@@ -79,48 +110,22 @@ def is_valid_output(text: str) -> bool:
 
     return True
 
-def refine_post(topic, body, snippet):
-    max_retries = 3
+def refine_post(topic, snippet, file_path, project, author_note=None, language="English"):
+    ext = os.path.splitext(file_path)[1].lstrip(".").lower()
+    fence = _FENCE_LANG.get(ext, ext)
+    user_prompt = f"""Language: {language}
+        Project: {project}
+        File: {file_path}
+        Theme: {topic}
+        Author's note (their own words, the only source for motives): {author_note or "(none given)"}
 
-    system_persona = """You are a senior backend engineer. 10+ years in production systems.
-        You write LinkedIn posts for other senior engineers.
-
-        RULES (non-negotiable):
-        - Max 220 words
-        - No markdown headers, no emojis, no hashtags in the body
-        - No bullets unless absolutely necessary (max 3)
-        - No corporate words: robust, scalable, leverage, innovative, game-changer
-        - No preachy openings: "Stop doing X", "Most devs...", "You're doing X wrong"
-        - No explaining what JWT or bcrypt IS — assume they know
-        - Never sound like an AI summary
-
-        STRUCTURE:
-        1. One-line hook — a real engineering pain or consequence (not clickbait)
-        2. What this code does and WHY it exists (2-3 sentences max)
-        3. What silently breaks if this is missing (concrete: outage, data corruption, duplicate charge, security hole)
-        4. One honest trade-off
-        5. One genuine question a senior engineer would actually debate
-
-        The code snippet is the anchor. Talk about decisions, not syntax.
-    """
-
-        # Body enriquecido con el snippet real
-    enriched_body = f"""
-        File: {topic}
-        Detected patterns: {body}
-
-        The post must be centered around this specific code:
-
-        ```typescript
+        Code snippet:
+        ```{fence}
         {snippet.strip()}
         ```
-
-        Do NOT summarize the code line by line.
-        Focus on: why this implementation exists, what production problem it solves,
-        and what happens in a real system when it's absent or wrong.
+        Do NOT summarize the code line by line. Focus on the decision behind it and its trade-off.
     """
-    return generate(system_persona, enriched_body, max_tokens=1500, validate=is_valid_output)
-
+    return generate(LINKEDIN_SYSTEM, user_prompt, max_tokens=1500,temperature=0.4, validate=is_valid_output)
 def generate_x_thread(topic, final_post):
     """Convierte el post en un hilo de X (Twitter) técnico y viral en inglés."""
     system_instruction = (

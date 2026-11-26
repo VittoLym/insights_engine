@@ -1,4 +1,9 @@
 import base64
+import os
+import time
+import base64
+import requests
+from playwright.sync_api import sync_playwright
 def generate_architecture_diagram(topic, folder_path):
     """Genera un diagrama Mermaid basado en el tópico del post."""
     print(f"        [📊] Generando diagrama de arquitectura...")
@@ -72,20 +77,16 @@ def generate_code_image(snippet, folder_path, title="Senior Dev Insight"):
         print(f"        [❌] Error en Playwright: {str(e)}")
         return False
 
-def trim_snippet_for_rayso(snippet: str, max_lines: int = 35) -> str:
-    """
-    Si el snippet es muy largo para Ray.so, corta en un punto limpio
-    (cierre de bloque lógico) en lugar de cortar arbitrariamente.
-    """
-    lines = snippet.split('\n')
+def trim_snippet_for_rayso(snippet: str, max_lines: int = 45) -> str:
+    """Corta en el último límite de sentencia dentro del máximo y cierra la llave."""
+    lines = snippet.split("\n")
     if len(lines) <= max_lines:
         return snippet
-
-    # Buscamos el último cierre de bloque antes del límite
-    for i in range(max_lines, max_lines - 10, -1):
-        stripped = lines[i].strip()
-        if stripped in ('}', '};', '});', '})', 'end'):
-            return '\n'.join(lines[:i+1])
-
-    # Si no hay cierre limpio, cortamos con indicador
-    return '\n'.join(lines[:max_lines]) + '\n  // ...'
+    depth, cut = 0, None
+    for i, line in enumerate(lines[:max_lines]):
+        depth += line.count("{") - line.count("}")
+        s = line.rstrip()
+        if depth <= 1 and s.strip() and s.endswith(("}", ";", ");", "});")):
+            cut = i
+    kept = lines[: (cut + 1) if cut is not None else max_lines]
+    return "\n".join(kept) + "\n    // ...\n}"
