@@ -16,6 +16,7 @@ from publishers.linkedin_publisher import publish_linkedin, get_first_png
 from scanner.repo_scanner import analyze_repo, audit_seniority
 from render import generate_code_image, trim_snippet_for_rayso, generate_architecture_diagram
 from llm import generate
+from kits import save_kit_json
 from scanner.audit import audit_post
 import argparse
 CONCEPT_MAP = {
@@ -69,7 +70,7 @@ MAX_SNIPPET_LINES = 15
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PERSON_URN   = os.getenv("URN_PERSON")
 TIMEOUT = 20
-
+stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
 def save_media_kit(index, post_data, linked_post, x_thread, visuals):
     date_str = datetime.now().strftime("%Y-%m-%d")
     topic_slug = post_data['topic'].replace(" ", "_").replace(":", "").lower()
@@ -565,6 +566,8 @@ if __name__ == "__main__":
                     print(f"         - {w}")
             visuals = generate_visual_prompts(post_data['topic'], post_data['snippet'])
             path = save_media_kit(i, post_data, linked_post, x_thread, visuals)
+            save_kit_json(path, repo=args.repo, project=project, post_data=post_data,
+              linkedin_post=linked_post, x_thread=x_thread, warnings=warnings)
             print(f"    [✓] Kit {i+1} saved to: {path}")
             # (publicación: la dejamos comentada hasta la Fase 1)
             time.sleep(5)  # Cooldown
