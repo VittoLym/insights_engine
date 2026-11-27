@@ -16,6 +16,7 @@ from publishers.linkedin_publisher import publish_linkedin, get_first_png
 from scanner.repo_scanner import analyze_repo, audit_seniority
 from render import generate_code_image, trim_snippet_for_rayso, generate_architecture_diagram
 from llm import generate
+from audit import audit_post
 import argparse
 CONCEPT_MAP = {
     "CONCURRENCY": {
@@ -556,7 +557,12 @@ if __name__ == "__main__":
             if not x_thread:
                 print("    [⚠️] Hilo de X no generado; el kit se guarda solo con el post de LinkedIn.")
                 x_thread = "(hilo no generado)"
-
+            warnings = audit_post(linked_post + "\n" + (x_thread or ""),
+            post_data["snippet"], args.note, post_data["file"])
+            if warnings:
+                print("    [🔎] Revisar antes de publicar:")
+                for w in warnings:
+                    print(f"         - {w}")
             visuals = generate_visual_prompts(post_data['topic'], post_data['snippet'])
             path = save_media_kit(i, post_data, linked_post, x_thread, visuals)
             print(f"    [✓] Kit {i+1} saved to: {path}")

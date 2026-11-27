@@ -8,7 +8,7 @@ load_dotenv()
 
 _clients = {}
 _cooldown = {}          # "provider:modelo" -> momento hasta el que se lo saltea
-COOLDOWN_SECONDS = 90
+COOLDOWN_SECONDS = 300
 _TRANSIENT = ("503", "unavailable", "429", "resource_exhausted", "rate limit", "overloaded")
 
 

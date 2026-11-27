@@ -90,36 +90,11 @@ def parse_pro_content(filename):
         return None, None, None
 
 def is_valid_output(text: str) -> bool:
-    if not text:
+    t = text.strip()
+    if len(t) < 80:
         return False
-
-    text = text.strip()
-
-    banned_patterns = [
-        "503",
-        "UNAVAILABLE",
-        "API Error",
-        "limit reached",
-        "quota exceeded",
-        "internal server error",
-        "model is currently experiencing high demand",
-        "try again later",
-        "rate limit",
-        "service unavailable",
-        "error occurred",
-    ]
-
-    lower_text = text.lower()
-
-    for pattern in banned_patterns:
-        if pattern.lower() in lower_text:
-            return False
-
-    # Muy corto = probablemente roto
-    if len(text) < 80:
-        return False
-
-    return True
+    head = t[:120].lower()
+    return not head.startswith(("error", "{'error'", '{"error"', "api error"))
 
 def refine_post(topic, snippet, file_path, project, author_note=None, language="English"):
     ext = os.path.splitext(file_path)[1].lstrip(".").lower()
