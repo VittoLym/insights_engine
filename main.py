@@ -16,7 +16,7 @@ from publishers.linkedin_publisher import publish_linkedin, get_first_png
 from scanner.repo_scanner import analyze_repo, audit_seniority
 from render import generate_code_image, trim_snippet_for_rayso, generate_architecture_diagram
 from llm import generate
-from audit import audit_post
+from scanner.audit import audit_post
 import argparse
 CONCEPT_MAP = {
     "CONCURRENCY": {

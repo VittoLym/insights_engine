@@ -6,7 +6,7 @@ import time
 from groq import Groq
 from llm import generate
 import json
-
+from scanner.audit import INTENT_RE
 load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL")
@@ -96,6 +96,11 @@ def is_valid_output(text: str) -> bool:
     head = t[:120].lower()
     return not head.startswith(("error", "{'error'", '{"error"', "api error"))
 
+def post_ok(text, note):
+    if not is_valid_output(text):
+        return False
+    return bool(note) or not INTENT_RE.search(text)
+
 def refine_post(topic, snippet, file_path, project, author_note=None, language="English"):
     ext = os.path.splitext(file_path)[1].lstrip(".").lower()
     fence = _FENCE_LANG.get(ext, ext)
@@ -111,7 +116,7 @@ def refine_post(topic, snippet, file_path, project, author_note=None, language="
         ```
         Do NOT summarize the code line by line. Focus on the decision behind it and its trade-off.
     """
-    return generate(LINKEDIN_SYSTEM, user_prompt, max_tokens=1500,temperature=0.4, validate=is_valid_output)
+    return generate(LINKEDIN_SYSTEM, user_prompt, max_tokens=1500,temperature=0.4, validate=lambda t: post_ok(t, author_note))
 
 def parse_thread_json(text, max_len=270, min_tweets=3, max_tweets=7):
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
